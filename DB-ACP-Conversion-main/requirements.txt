@@ -1,0 +1,9 @@
+fastapi
+uvicorn[standard]
+asyncpg
+pydantic
+python-dotenv
+requests
+starlette
+structlog
+a2a-sdk
