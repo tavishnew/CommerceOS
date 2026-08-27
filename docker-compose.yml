@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: commerce
+      POSTGRES_PASSWORD: commerce
+      POSTGRES_DB: commerce0s
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U commerce"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+      target: dev
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://commerce:commerce@db:5432/commerce0s
+      SUPPLIER_URL: http://host.docker.internal:8080
+      RETAILER_URL: http://host.docker.internal:8082
+      PORT: "5000"
+      ENCRYPTION_KEY: devkey-devkey-devkey-devkey-devkey-devkey01
+      RAZORPAY_KEY_ID: rzp_test_XXXXXXXXXXXXXXXX
+      RAZORPAY_KEY_SECRET: XXXXXXXXXXXXXXXX
+      RAZORPAY_WEBHOOK_SECRET: XXXXXXXXXXXXXXXX
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./apps/api/src:/repo/apps/api/src
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: dev
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      PORT: "5173"
+      BASE_PATH: /
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./apps/web/src:/repo/apps/web/src
+      - ./apps/web/index.html:/repo/apps/web/index.html
+      - ./apps/web/vite.config.ts:/repo/apps/web/vite.config.ts
+      - ./apps/web/public:/repo/apps/web/public
+
+volumes:
+  pgdata:

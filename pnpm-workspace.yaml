@@ -1,8 +1,11 @@
 packages:
-  - "artifacts/*"
+  - "apps/*"
 
 allowBuilds:
-  esbuild: set this to true or false
+  esbuild: true
+
+overrides:
+  motion-dom: 12.6.3
 
 catalog:
   "@replit/vite-plugin-cartographer": "0.6.1"

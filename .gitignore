@@ -1,0 +1,79 @@
+# Node / pnpm
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+
+# Build output
+dist/
+build/
+out/
+*.tsbuildinfo
+.cache/
+.turbo/
+
+# Env / secrets
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+apps/api/.env
+apps/web/.env
+apps/web/.env.local
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Coverage
+coverage/
+.nyc_output/
+
+# Archives & temp
+archive/
+*.zip
+*.tar.gz
+*.tgz
+
+# Tooling
+.impeccable/
+.replit-artifact/
+
+# Python (services/agents)
+services/agents/venv/
+services/agents/.venv/
+services/agents/venv_a2a/
+services/agents/__pycache__/
+services/agents/**/__pycache__/
+services/agents/*.db
+services/agents/*.sqlite
+services/agents/*.sqlite3
+services/agents/.env
+services/agents/.pytest_cache/
+services/agents/.mypy_cache/
+services/agents/.ruff_cache/
+
+# Demo recording output
+apps/web/demo/commerce0s-demo-90s.webm
+apps/web/demo/commerce0s-demo-90s.mp4
+
+# Agent reference (vendored, treated as external)
+reference/a2a-protocol/agent-a/node_modules/
+reference/a2a-protocol/agent-a/dist/
+reference/a2a-protocol/agent-b/node_modules/
+reference/a2a-protocol/agent-b/dist/
