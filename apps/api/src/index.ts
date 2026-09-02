@@ -1199,15 +1199,17 @@ app.get('/api/transactions/:txn', async (req, res) => {
 });
 
 // GET /api/activity — recent audit rows scoped to merchant workspace(s).
-// When no explicit workspaceId is supplied we return the union of all
-// merchant-side workspaces (the live `default` plus the demo
-// `ws_demo_merchant`) so the landing activity panel shows a single merged
-// trail regardless of which merchant-side workspace the rows were recorded
-// against. The demo buyer workspace is excluded — that is the buyer-side
-// trail and is shown on the buyer pages.
+// When no explicit workspaceId is supplied we return rows for the
+// caller's merchant workspace. The `isDemo` query flag (set by the
+// client from /api/bootstrap's response) controls whether the demo
+// merchant workspace is included. Non-demo callers get only their own
+// merchant-side rows; demo callers get the union of the live merchant
+// workspace and the demo one. The demo buyer workspace is excluded —
+// that is the buyer-side trail and is shown on the buyer pages.
 app.get('/api/activity', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 12, 100);
   const explicit = (req.query.workspaceId as string | undefined)?.trim();
+  const isDemo = String(req.query.isDemo ?? '').toLowerCase() === 'true';
   try {
     let rows;
     if (explicit) {
@@ -1220,13 +1222,16 @@ app.get('/api/activity', async (req, res) => {
         [explicit, limit],
       ));
     } else {
+      const workspaces = isDemo
+        ? [DEFAULT_MERCHANT_WORKSPACE_ID, DEMO_MERCHANT_WORKSPACE]
+        : [DEFAULT_MERCHANT_WORKSPACE_ID];
       ({ rows } = await pool.query(
         `SELECT id, timestamp, actor, action, detail, amount, outcome
          FROM audit_log
          WHERE workspace_id = ANY($1::text[])
          ORDER BY timestamp DESC
          LIMIT $2`,
-        [[DEFAULT_MERCHANT_WORKSPACE_ID, DEMO_MERCHANT_WORKSPACE], limit],
+        [workspaces, limit],
       ));
     }
     res.json(rows);

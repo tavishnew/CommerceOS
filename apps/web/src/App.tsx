@@ -259,9 +259,10 @@ function ButtonArrow({
 
 function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
   const [, setLocation] = useLocation();
+  const { isDemo } = useWorkspace();
   const { data: liveRows = [] } = useQuery<ActivityRow[]>({
-    queryKey: ['activity', 'landing'],
-    queryFn: () => fetchActivity(4),
+    queryKey: ['activity', 'landing', isDemo],
+    queryFn: () => fetchActivity(4, undefined, isDemo),
     refetchInterval: 4000,
   });
   return (
@@ -1251,9 +1252,10 @@ function PageHeading({
 
 function ActivityPanel() {
   const [, setLocation] = useLocation();
+  const { isDemo } = useWorkspace();
   const { data: rows = [], isLoading, isError, dataUpdatedAt } = useQuery<ActivityRow[]>({
-    queryKey: ['activity', 'overview'],
-    queryFn: () => fetchActivity(6),
+    queryKey: ['activity', 'overview', isDemo],
+    queryFn: () => fetchActivity(6, undefined, isDemo),
     refetchInterval: 3000,
   });
 

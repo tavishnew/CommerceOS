@@ -475,10 +475,19 @@ export interface ActivityRow {
   outcome: string;
 }
 
-export function fetchActivity(limit = 12, workspaceId?: string): Promise<ActivityRow[]> {
+export function fetchActivity(
+  limit = 12,
+  workspaceId?: string,
+  isDemo?: boolean,
+): Promise<ActivityRow[]> {
   const qs = new URLSearchParams();
   qs.set('limit', String(limit));
   if (workspaceId) qs.set('workspaceId', workspaceId);
+  // `isDemo` (set from /api/bootstrap's response) tells the server
+  // whether to include the seeded demo merchant workspace in the
+  // result union. Non-demo callers see only their own merchant-side
+  // rows; demo callers see the seeded demo trail merged in.
+  if (isDemo) qs.set('isDemo', 'true');
   return apiFetch<ActivityRow[]>(`/api/activity?${qs.toString()}`);
 }
 
