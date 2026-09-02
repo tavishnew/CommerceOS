@@ -135,6 +135,7 @@ import {
   disputeOrder,
   refundOrder,
   getOrCreateBuyerWorkspaceId,
+  setStoredBuyerEmail,
   createBasket,
   startCheckout,
   humanApproveCheckout,
@@ -720,8 +721,10 @@ function Auth({
   theme: Theme;
   onToggle: () => void;
 }) {
+  const { retry: retryBootstrap } = useWorkspace();
   const [mode, setMode] = useState<'create' | 'signin'>('create');
   const [role, setRole] = useState<Role>('merchant');
+  const [email, setEmail] = useState('');
   const [submitted, setSubmitted] = useState(false);
   return (
     <div className="grain flex min-h-[100dvh] flex-col bg-background">
@@ -823,6 +826,10 @@ function Auth({
               className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus:border-[var(--commerce-signal)]"
               placeholder="you@company.com"
               data-testid="input-auth-email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              type="email"
+              autoComplete="email"
             />
           </label>
           {mode === 'create' && (
@@ -838,7 +845,27 @@ function Auth({
           <Button
             onClick={() => {
               setSubmitted(true);
-              setTimeout(() => onChooseRole(role), 400);
+              // Persist the email and clear any stale workspace id so the
+              // next bootstrap call mints a fresh candidate workspace for
+              // the new email. Without this, the email entered here was
+              // dropped on the floor and the user kept landing on the
+              // previous (or demo) workspace — which is what surfaced as
+              // "demo data after creating a new workspace".
+              setStoredBuyerEmail(email.trim() ? email.trim() : null);
+              try {
+                localStorage.removeItem('commerce0s.buyerWorkspaceId');
+                localStorage.removeItem('commerce0s.buyerBootstrapped');
+              } catch {
+                /* localStorage unavailable */
+              }
+              void (async () => {
+                try {
+                  await retryBootstrap();
+                } catch {
+                  /* surfaced via BootstrapErrorBridge */
+                }
+                setTimeout(() => onChooseRole(role), 200);
+              })();
             }}
             className="mt-6 h-11 w-full rounded-lg bg-foreground text-background hover:bg-foreground/85"
             data-testid="button-auth-submit"
