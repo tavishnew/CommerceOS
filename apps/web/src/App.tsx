@@ -4763,7 +4763,7 @@ function Checkout({
           </div>
         ) : policy ? (
           <div className="mt-8 rounded-xl border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 p-4">
-            <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+            <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-foreground">
               <ShieldCheck size={14} /> policy check passed
             </div>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
