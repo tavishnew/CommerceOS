@@ -3781,7 +3781,26 @@ app.get('/api/audit/export', async (req, res) => {
 });
 
 // ── Start ───────────────────────────────────────────────────────────────────
-const PORT = Number(process.env.PORT ?? 5000);
+// Render (and most PaaS) inject `PORT` at runtime and require the app to
+// bind `0.0.0.0`. Fall back to 5000 for local dev. If `PORT` is set to
+// "0" or empty, log loudly so the deploy log shows the bad env rather
+// than silently binding to port 0 (which produces the
+// "listening on http://localhost:0 / New primary port detected" loop).
+function resolvePort(): number {
+  const raw = process.env.PORT;
+  if (raw === undefined || raw === '') {
+    console.warn('⚠️  PORT env var not set — defaulting to 5000 (set it in your platform dashboard for prod).');
+    return 5000;
+  }
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0 || !Number.isInteger(n)) {
+    throw new Error(`Invalid PORT value: "${raw}". Must be a positive integer.`);
+  }
+  return n;
+}
+
+const PORT = resolvePort();
+const HOST = '0.0.0.0';
 
 async function start() {
   // Verify DB connection
@@ -3851,8 +3870,8 @@ async function start() {
   // for protocol events that must outlive a process restart.
   startOutbox(pool, { intervalMs: 5_000 });
 
-  app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 API gateway listening on http://localhost:${PORT}`);
+  app.listen(PORT, HOST, () => {
+    console.log(`🚀 API gateway listening on http://${HOST}:${PORT} (process.env.PORT=${process.env.PORT ?? '<unset>'})`);
   });
 }
 
