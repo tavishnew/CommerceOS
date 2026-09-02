@@ -51,9 +51,9 @@ services:
       args:
         # VITE_API_URL is read by Vite at dev-server start time. Set this in
         # the host shell (export VITE_API_URL=...) when running through a
-        # shared DevTunnel so the browser bundle points at the tunnel API
-        # origin. Local dev can leave it unset; the fallback in src/lib/api.ts
-        # is http://localhost:5000.
+        # shared origin (e.g. ngrok HTTPS URL) so the browser bundle points
+        # at the shared API origin. Local dev can leave it unset; the
+        # fallback in src/lib/api.ts is http://localhost:5000.
         VITE_API_URL: ${VITE_API_URL:-}
     restart: unless-stopped
     depends_on:

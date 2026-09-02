@@ -125,8 +125,11 @@ export async function seedDemoDataIfEmpty(pool: pg.Pool): Promise<void> {
     );
   }
 
-  // Audit / activity rows so the agent-activity and audit pages have
-  // something to render on first load.
+  // Audit / activity rows so the merchant-side agent-activity panel and
+  // audit log have something to render on first load. We tag the rows with
+  // the demo MERCHANT workspace (not the buyer workspace) because the
+  // merchant landing reads from `merchantWorkspace()`. The buyer-side views
+  // query the buyer workspace separately.
   await pool.query(
     `INSERT INTO audit_log (transaction_id, workspace_id, actor, action, detail, amount, outcome)
      VALUES
@@ -136,7 +139,7 @@ export async function seedDemoDataIfEmpty(pool: pg.Pool): Promise<void> {
        ($5, $2, 'buyer.demo', 'policy_check', 'pending_human_review: ' || $3, $4, 'human_approval_required')`,
     [
       txn1,
-      DEMO_BUYER_WORKSPACE_ID,
+      DEMO_MERCHANT_WORKSPACE,
       firstProd?.name ?? 'demo item',
       firstProd ? Number(firstProd.price) : 0,
       txn2,

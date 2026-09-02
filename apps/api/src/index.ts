@@ -122,12 +122,30 @@ app.use(express.json());
 
 // ── Database ──
 
-const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL,
-  max: 10,
-  idleTimeoutMillis: 30_000,
-  connectionTimeoutMillis: 5_000,
-});
+// Managed Postgres (Neon, Render PG, Supabase) requires TLS. Honor
+// `sslmode=require` (or `sslmode=verify-full`) in the DATABASE_URL or set
+// `PGSSLMODE=require` in the environment. Local Postgres is unaffected
+// because the connection URL has no `sslmode` and the helper short-circuits.
+function pgPoolConfig(connectionString: string | undefined): pg.PoolConfig {
+  const cfg: pg.PoolConfig = {
+    connectionString,
+    max: 10,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 5_000,
+  };
+  const url = connectionString ?? '';
+  const sslMode = (process.env.PGSSLMODE ?? '').toLowerCase()
+    || /[?&]sslmode=(require|verify-ca|verify-full|prefer)/i.exec(url)?.[1]?.toLowerCase()
+    || '';
+  if (sslMode === 'require' || sslMode === 'prefer') {
+    cfg.ssl = { rejectUnauthorized: false };
+  } else if (sslMode === 'verify-ca' || sslMode === 'verify-full') {
+    cfg.ssl = { rejectUnauthorized: true };
+  }
+  return cfg;
+}
+
+const pool = new pg.Pool(pgPoolConfig(process.env.DATABASE_URL));
 
 // Run `fn(client)` in a tx; commit on resolve, rollback on throw. Network calls must NOT be inside the callback.
 async function withTransaction<T>(
@@ -1180,19 +1198,37 @@ app.get('/api/transactions/:txn', async (req, res) => {
   }
 });
 
-// GET /api/activity — recent audit rows scoped to merchant workspace
+// GET /api/activity — recent audit rows scoped to merchant workspace(s).
+// When no explicit workspaceId is supplied we return the union of all
+// merchant-side workspaces (the live `default` plus the demo
+// `ws_demo_merchant`) so the landing activity panel shows a single merged
+// trail regardless of which merchant-side workspace the rows were recorded
+// against. The demo buyer workspace is excluded — that is the buyer-side
+// trail and is shown on the buyer pages.
 app.get('/api/activity', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 12, 100);
-  const workspaceId = (req.query.workspaceId as string | undefined)?.trim() || merchantWorkspace();
+  const explicit = (req.query.workspaceId as string | undefined)?.trim();
   try {
-    const { rows } = await pool.query(
-      `SELECT id, timestamp, actor, action, detail, amount, outcome
-       FROM audit_log
-       WHERE workspace_id = $1
-       ORDER BY timestamp DESC
-       LIMIT $2`,
-      [workspaceId, limit],
-    );
+    let rows;
+    if (explicit) {
+      ({ rows } = await pool.query(
+        `SELECT id, timestamp, actor, action, detail, amount, outcome
+         FROM audit_log
+         WHERE workspace_id = $1
+         ORDER BY timestamp DESC
+         LIMIT $2`,
+        [explicit, limit],
+      ));
+    } else {
+      ({ rows } = await pool.query(
+        `SELECT id, timestamp, actor, action, detail, amount, outcome
+         FROM audit_log
+         WHERE workspace_id = ANY($1::text[])
+         ORDER BY timestamp DESC
+         LIMIT $2`,
+        [[DEFAULT_MERCHANT_WORKSPACE_ID, DEMO_MERCHANT_WORKSPACE], limit],
+      ));
+    }
     res.json(rows);
   } catch (err) {
     console.error('GET /api/activity error:', err);

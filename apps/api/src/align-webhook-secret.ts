@@ -20,8 +20,11 @@ function encryptSecret(plaintext: string): string {
   return Buffer.concat([iv, tag, ct]).toString('base64');
 }
 
+if (!process.env.DATABASE_URL) {
+  throw new Error('DATABASE_URL is required to align the webhook secret.');
+}
 const pool = new pg.Pool({
-  connectionString: process.env.DATABASE_URL ?? 'postgres://commerce:commerce@db:5432/commerce0s',
+  connectionString: process.env.DATABASE_URL,
 });
 const enc = encryptSecret(TARGET);
 await pool.query(
