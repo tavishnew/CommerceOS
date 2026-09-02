@@ -31,7 +31,12 @@ export default defineConfig({
   },
   root: path.resolve(import.meta.dirname),
   build: {
-    outDir: path.resolve(import.meta.dirname, 'dist/public'),
+    // Vite's default `outDir` is `dist` and that is what every static
+    // host (Vercel, Netlify, Cloudflare Pages) expects. An earlier
+    // revision used `dist/public` to match a docker-compose volume
+    // mount, but it broke Vercel's default Output Directory detection
+    // and produced a 404 at `/` after a passing build.
+    outDir: path.resolve(import.meta.dirname, 'dist'),
     emptyOutDir: true,
   },
   server: {
