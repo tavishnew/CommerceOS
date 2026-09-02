@@ -4040,8 +4040,6 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
   const isOrders = subpage === '/buyer/orders';
   const isSettings = subpage === '/buyer/settings';
 
-  if (isSettings) return <BuyerSettings />;
-
   const { data: buyerOrders, isLoading: ordersLoading } = useQuery<Order[]>({
     queryKey: ['orders'],
     queryFn: fetchOrders,
@@ -4054,6 +4052,8 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
     queryFn: () => fetchBuyerSession(getOrCreateBuyerWorkspaceId()),
     staleTime: 30_000,
   });
+
+  if (isSettings) return <BuyerSettings />;
 
   const handleSubmit = async () => {
     const trimmed = prompt.trim();
