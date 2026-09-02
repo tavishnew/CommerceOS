@@ -35,7 +35,6 @@ import {
   Search,
   Send,
   Settings as SettingsIcon,
-  Settings2,
   ShieldCheck,
   ShoppingBag,
   SlidersHorizontal,
@@ -952,18 +951,6 @@ function Sidebar({
             </Link>
           );
         })}
-        <div className="my-5 h-px bg-sidebar-border" />
-        <Link
-          href={role === 'merchant' ? '/merchant/settings' : '/buyer/settings'}
-          className={cn(
-            'flex h-11 items-center gap-3 rounded-lg px-3 text-sm font-semibold text-sidebar-foreground/60 hover:bg-sidebar-accent hover:text-sidebar-foreground',
-            collapsed && 'justify-center px-0',
-          )}
-          data-testid="link-nav-settings"
-        >
-          <Settings2 size={17} />
-          <span className={cn(collapsed && 'hidden')}>Settings</span>
-        </Link>
       </div>
       <div className={cn('border-t border-sidebar-border p-4', collapsed && 'px-3')}>
         <div className={cn('flex items-center gap-3', collapsed && 'justify-center')}>
