@@ -3056,10 +3056,10 @@ function TransactionDetailDrawer({
                 </div>
                 <div>
                   <h3 className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
-                    audit events ({data.audit.length})
+                    audit events ({data.audit?.length ?? 0})
                   </h3>
                   <div className="mt-2 space-y-1">
-                    {data.audit.map((a) => (
+                    {(data.audit ?? []).map((a) => (
                       <div
                         key={a.id}
                         className="flex items-start gap-3 rounded-md border border-foreground/10 bg-card p-2.5"
@@ -3801,12 +3801,12 @@ function BuyerOrderCard({ order }: { order: Order }) {
                 )}
                 {order.transaction_id && trace.data && (
                   <div className="mt-2 space-y-1">
-                    {trace.data.audit.length === 0 && (
+                    {(trace.data.audit?.length ?? 0) === 0 && (
                       <p className="text-sm text-muted-foreground">
                         No audit events for this transaction.
                       </p>
                     )}
-                    {trace.data.audit.slice(0, 10).map((a) => (
+                    {(trace.data.audit ?? []).slice(0, 10).map((a) => (
                       <div
                         key={a.id}
                         className="flex items-start gap-2 rounded-md border border-foreground/10 bg-background p-2 text-xs"

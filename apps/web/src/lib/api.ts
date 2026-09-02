@@ -83,6 +83,19 @@ export async function bootstrapSession(
   email: string | null,
 ): Promise<BootstrapResponse> {
   const candidate = getOrCreateBuyerWorkspaceId();
+  // `${API_BASE}/api/bootstrap` resolves to the API origin configured at
+  // build time via VITE_API_URL. When that env var is not set (e.g. a
+  // Vercel project that forgot to configure it), API_BASE falls back to
+  // `http://localhost:5000` and the browser would attempt a cross-origin
+  // POST to a host that is not the same-origin web app. We catch that
+  // distinctly so the user sees a clear message instead of a raw 405 /
+  // network error in the console.
+  if (!API_BASE) {
+    throw new ApiError('API base URL is not configured.', {
+      code: 'API_BASE_MISSING',
+      status: 0,
+    });
+  }
   const res = await fetch(`${API_BASE}/api/bootstrap`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -95,9 +108,24 @@ export async function bootstrapSession(
       status: res.status,
     });
   }
+  // Validate the response shape. The server contract is a strict
+  // BootstrapResponse; an unexpected body (e.g. an HTML 405 page parsed
+  // loosely, or a proxy/gateway error masquerading as JSON) must not
+  // propagate to the rest of the app where a missing workspaceId
+  // would crash downstream consumers that call .length / .trim on it.
+  if (
+    typeof body.workspaceId !== 'string' ||
+    typeof body.merchantWorkspaceId !== 'string' ||
+    typeof body.isDemo !== 'boolean'
+  ) {
+    throw new ApiError('Bootstrap response was malformed.', {
+      code: 'BOOTSTRAP_MALFORMED',
+      status: res.status,
+    });
+  }
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem(WS_KEY, body.workspaceId);
-    setStoredBuyerEmail(body.email);
+    setStoredBuyerEmail(body.email ?? null);
     localStorage.setItem(BOOTSTRAPPED_KEY, '1');
   }
   return body;
@@ -456,8 +484,10 @@ export function fetchActivity(limit = 12, workspaceId?: string): Promise<Activit
 
 export interface TransactionDetail {
   transactionId: string;
-  orders: Order[];
-  audit: Array<ActivityRow & { transaction_id: string | null; workspace_id: string | null }>;
+  orders?: Order[];
+  // `audit` is optional in the wire type because older / partial
+  // responses may omit the array; the UI defaults to `[]` defensively.
+  audit?: Array<ActivityRow & { transaction_id: string | null; workspace_id: string | null }>;
 }
 
 export function fetchTransactionDetail(txnId: string): Promise<TransactionDetail> {

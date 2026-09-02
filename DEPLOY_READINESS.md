@@ -108,6 +108,17 @@ PORT=3000
 BASE_PATH=/
 ```
 
+**VITE_API_URL is mandatory** — without it, the web bundle embeds
+`http://localhost:5000` as the API origin. The browser then POSTs
+`/api/bootstrap` to loopback from a public Vercel origin, which Chrome's
+Private Network Access policy blocks (or Vercel returns 405 because the
+path is not routed). Both surfaces show as `/api/bootstrap 405` in the
+network tab and the workspace context throws a `BOOTSTRAP_FAILED` /
+`API_BASE_MISSING` error. Set `VITE_API_URL` to your Render API's
+`https://<service>.onrender.com` URL on **all three** Vercel
+environments (Production, Preview, Development). After changing it,
+redeploy — Vite bakes `VITE_*` vars into the bundle at build time.
+
 If you want preview deploys to share the prod API, leave the same values on the Preview environment. Otherwise override per branch.
 
 ## 8. Code changes made in this audit
