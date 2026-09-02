@@ -4275,7 +4275,7 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
                       animate={{ opacity: 1, y: 0 }}
                       className="max-w-[390px] rounded-2xl rounded-tl-sm border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-4 py-3 text-sm leading-6"
                     >
-                      <div className="mb-2 flex items-center gap-2 font-mono-ui text-[9px] uppercase tracking-[.12em] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+                      <div className="mb-2 flex items-center gap-2 font-mono-ui text-[9px] uppercase tracking-[.12em] text-foreground">
                         <Sparkles size={12} /> completed{elapsed != null ? ` in ${elapsed}ms` : ''}
                       </div>
                       {rec ? (
