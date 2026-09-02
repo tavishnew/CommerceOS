@@ -78,6 +78,21 @@ NODE_ENV=production
 PORT=10000
 ```
 
+**`FRONTEND_ORIGIN` is mandatory** — without it the API only allowlists
+`http://localhost:5173` and `http://127.0.0.1:5173`. Every browser fetch
+from the Vercel origin will be blocked at the preflight with:
+
+> No 'Access-Control-Allow-Origin' header is present on the requested resource.
+
+The custom CORS middleware in `apps/api/src/index.ts:50-97` builds its
+allowlist from this env var (single origin) plus `CORS_EXTRA_ORIGINS`
+(comma-separated, for preview deploys / custom domains). Both are
+trimmed and stored in a `Set`. Preflight `OPTIONS` returns 204 with
+`Access-Control-Allow-Origin` only when the request `Origin` is in the
+set; non-preflight requests get the same header treatment. No wildcards,
+no origin reflection. After changing `FRONTEND_ORIGIN` on Render you
+must redeploy — env vars are read once at module load.
+
 **Do not set** `TEST_MODE_NO_RAZORPAY` (leave it unset so production hits real Razorpay). Configure per-merchant Razorpay credentials via the merchant Settings UI or set `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`/`RAZORPAY_WEBHOOK_SECRET` for the platform default.
 
 Optional:
@@ -89,6 +104,11 @@ DEMO_ACCOUNT_EMAIL=<email to keep routing to the demo workspace>
 ADMIN_TOKEN=<long random string; gates /api/admin/*>
 CORS_EXTRA_ORIGINS=https://<your-vercel-preview-pattern>.vercel.app
 ```
+
+`CORS_EXTRA_ORIGINS` is comma-separated. Use it to allow Vercel preview
+deploys without redeploying the API — each preview URL is added at
+request time, no rebuild needed. Example:
+`CORS_EXTRA_ORIGINS=https://commerce-os-delta.vercel.app,https://commerce-os-delta-git-main-<org>.vercel.app`.
 
 ## 7. Vercel (web) configuration
 
