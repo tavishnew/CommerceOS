@@ -571,7 +571,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
                 ] as Array<{ num: string; title: string; text: string; Icon: typeof Search }>
               ).map(({ num, title, text, Icon }) => (
                 <div key={num} className="bg-background p-6 sm:p-7">
-                  <span className="font-mono-ui text-[10px] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+                  <span className="font-mono-ui text-[10px] text-foreground">
                     {num}
                   </span>
                   <Icon className="mt-12 text-muted-foreground" size={19} />
@@ -1110,7 +1110,7 @@ function MetricCard({
           size={16}
           className={
             signal
-              ? 'text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]'
+              ? 'text-foreground'
               : 'text-muted-foreground'
           }
         />
@@ -1121,7 +1121,7 @@ function MetricCard({
           className={cn(
             'font-mono-ui text-[10px]',
             signal
-              ? 'text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]'
+              ? 'text-foreground'
               : 'text-muted-foreground',
           )}
         >
@@ -2725,14 +2725,14 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
                     className={cn(
                       'rounded-full border px-2.5 py-1 font-mono-ui text-[10px]',
                       protocolOnly
-                        ? 'border-[var(--commerce-signal)] bg-[var(--commerce-signal)]/10 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]'
+                        ? 'border-[var(--commerce-signal)] bg-[var(--commerce-signal)]/10 text-foreground'
                         : 'border-foreground/15 text-muted-foreground hover:bg-foreground/[.06]',
                     )}
                     data-testid="button-protocol-only"
                   >
                     {protocolOnly ? 'Protocol only' : 'All events'}
                   </button>
-                  <span className="font-mono-ui text-[10px] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+                  <span className="font-mono-ui text-[10px] text-foreground">
                     {recentCount} events / 5 min
                   </span>
                 </div>
@@ -3265,7 +3265,7 @@ function Settings() {
         <div className="rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
           <div className="flex items-start gap-4">
             <ShieldCheck
-              className="mt-1 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]"
+              className="mt-1 text-foreground"
               size={20}
             />
             <div className="flex-1">
@@ -3447,14 +3447,14 @@ function PaymentGatewaySection() {
     >
       <div className="flex items-start gap-4">
         <KeyRound
-          className="mt-1 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]"
+          className="mt-1 text-foreground"
           size={20}
         />
         <div className="flex-1">
           <div className="flex items-center justify-between">
             <h3 className="font-display text-xl font-bold">Payment gateway</h3>
             {configured ? (
-              <span className="flex items-center gap-2 rounded-full border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-3 py-1.5 font-mono-ui text-[10px] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+              <span className="flex items-center gap-2 rounded-full border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-3 py-1.5 font-mono-ui text-[10px] text-foreground">
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--commerce-signal)]" /> connected
               </span>
             ) : (
@@ -4363,7 +4363,7 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
               </div>
               <ShieldCheck
                 size={18}
-                className="text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]"
+                className="text-foreground"
               />
             </div>
             <div className="mt-8 space-y-4">
@@ -4472,7 +4472,7 @@ function Trace({
     return {
       borderClass: '',
       dotClass:
-        'border-[var(--commerce-signal)]/50 bg-[var(--commerce-signal)]/10 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]',
+        'border-[var(--commerce-signal)]/50 bg-[var(--commerce-signal)]/10 text-foreground',
     };
   };
 
@@ -4834,7 +4834,7 @@ function Checkout({
           <div className="mt-7 space-y-5 font-mono-ui text-[10px]">
             <div>
               <p className="text-muted-foreground">PAYMENT MODE</p>
-              <p className="mt-1 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+              <p className="mt-1 text-foreground">
                 TEST / REVERSIBLE
               </p>
             </div>
@@ -4869,7 +4869,7 @@ function Checkout({
             <div className="mt-10 rounded-lg bg-muted p-3 text-xs leading-5">
               <Check
                 size={14}
-                className="mb-2 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]"
+                className="mb-2 text-foreground"
               />
               Receipt recorded. No real funds moved.
             </div>
