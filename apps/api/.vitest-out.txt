@@ -1,0 +1,9 @@
+﻿
+ RUN  v4.1.11 C:/Users/tavis/Desktop/CommerceOS/apps/api
+
+
+ Test Files  3 passed (3)
+      Tests  52 passed (52)
+   Start at  13:06:07
+   Duration  1.04s (transform 188ms, setup 0ms, import 318ms, tests 1.18s, environment 0ms)
+

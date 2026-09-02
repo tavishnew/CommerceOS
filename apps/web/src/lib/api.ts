@@ -1,4 +1,112 @@
-const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000';
+// VITE_API_URL is the single source of truth. The dev fallback to
+// http://localhost:5000 is intentional for `pnpm dev` on a developer
+// machine without a shared dev environment. Any build intended for the
+// shared demo MUST set VITE_API_URL at build time so the browser hits the
+// shared API origin (not loopback, which Chrome's PNA will block from a
+// public-origin page).
+const FALLBACK_API_URL = 'http://localhost:5000';
+const API_BASE = (import.meta.env.VITE_API_URL ?? FALLBACK_API_URL).replace(
+  /\/$/,
+  '',
+);
+
+// ── Workspace bootstrap ────────────────────────────────────────────────────
+
+/** Designated demo email (server-defined, configurable via VITE_DEMO_ACCOUNT_EMAIL).
+ *  Matches are routed to the demo workspace; no other user sees that data. */
+export const DEMO_ACCOUNT_EMAIL = (
+  import.meta.env.VITE_DEMO_ACCOUNT_EMAIL ?? 'tavish350@gmail.com'
+).toLowerCase().trim();
+
+/** Frontend check only — the server enforces. Never trust this for authorization. */
+export function isDemoAccount(email: string | null | undefined): boolean {
+  if (!email) return false;
+  return email.toLowerCase().trim() === DEMO_ACCOUNT_EMAIL;
+}
+
+const WS_KEY = 'commerce0s.buyerWorkspaceId';
+const EMAIL_KEY = 'commerce0s.buyerEmail';
+const BOOTSTRAPPED_KEY = 'commerce0s.buyerBootstrapped';
+
+export interface BootstrapResponse {
+  workspaceId: string;
+  isDemo: boolean;
+  email: string | null;
+  merchantWorkspaceId: string;
+}
+
+function read<T>(key: string): T | null {
+  if (typeof localStorage === 'undefined') return null;
+  const v = localStorage.getItem(key);
+  return v ? (JSON.parse(v) as T) : null;
+}
+
+function write(key: string, value: unknown): void {
+  if (typeof localStorage === 'undefined') return;
+  if (value === null || value === undefined) {
+    localStorage.removeItem(key);
+  } else {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+}
+
+/** Local fallback before the server has confirmed the workspace. The server
+ *  re-assigns this on first call so the email-vs-id mismatch resolves there. */
+export function getOrCreateBuyerWorkspaceId(): string {
+  let ws = typeof localStorage !== 'undefined' ? localStorage.getItem(WS_KEY) : null;
+  if (!ws) {
+    ws = crypto.randomUUID().replace(/-/g, '');
+    if (typeof localStorage !== 'undefined') localStorage.setItem(WS_KEY, ws);
+  }
+  return ws;
+}
+
+export function getStoredBuyerEmail(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage.getItem(EMAIL_KEY);
+}
+
+export function setStoredBuyerEmail(email: string | null): void {
+  if (typeof localStorage === 'undefined') return;
+  if (!email) {
+    localStorage.removeItem(EMAIL_KEY);
+  } else {
+    localStorage.setItem(EMAIL_KEY, email.toLowerCase().trim());
+  }
+}
+
+/** Idempotent. Server returns the canonical workspaceId for the (caller-supplied
+ *  email) pair — and the demo flag. The browser may send a candidate workspaceId
+ *  but the server decides what to keep; this prevents the browser from
+ *  self-assigning into the demo workspace. */
+export async function bootstrapSession(
+  email: string | null,
+): Promise<BootstrapResponse> {
+  const candidate = getOrCreateBuyerWorkspaceId();
+  const res = await fetch(`${API_BASE}/api/bootstrap`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, candidateWorkspaceId: candidate }),
+  });
+  const body = (await res.json().catch(() => null)) as BootstrapResponse | null;
+  if (!res.ok || !body) {
+    throw new ApiError('Could not initialise your session.', {
+      code: 'BOOTSTRAP_FAILED',
+      status: res.status,
+    });
+  }
+  if (typeof localStorage !== 'undefined') {
+    localStorage.setItem(WS_KEY, body.workspaceId);
+    setStoredBuyerEmail(body.email);
+    localStorage.setItem(BOOTSTRAPPED_KEY, '1');
+  }
+  return body;
+}
+
+export function isBootstrapped(): boolean {
+  if (typeof localStorage === 'undefined') return false;
+  return localStorage.getItem(BOOTSTRAPPED_KEY) === '1';
+}
 
 // ── Errors ──────────────────────────────────────────────────────────────────
 
@@ -55,6 +163,13 @@ export interface Order {
   amount: number;
   status: string;
   created_at: string;
+  transaction_id?: string | null;
+  workspace_id?: string | null;
+  human_approved_at?: string | null;
+  dispute_reason?: string | null;
+  razorpay_payment_id?: string | null;
+  razorpay_refund_id?: string | null;
+  razorpay_refund_amount?: number | null;
 }
 
 // ── Fetch helpers ───────────────────────────────────────────────────────────
@@ -157,16 +272,24 @@ export interface RefundedOrder {
   razorpay_refund_id: string;
 }
 
-export function disputeOrder(orderId: number, reason: string): Promise<DisputedOrder> {
+export function disputeOrder(
+  orderId: number,
+  reason: string,
+  workspaceId: string,
+): Promise<DisputedOrder> {
   return apiFetch<DisputedOrder>(`/api/orders/${orderId}/dispute`, {
     method: 'POST',
-    body: JSON.stringify({ reason }),
+    body: JSON.stringify({ reason, workspaceId }),
   });
 }
 
-export function refundOrder(orderId: number): Promise<{ order: RefundedOrder; refundId: string }> {
+export function refundOrder(
+  orderId: number,
+  workspaceId: string,
+): Promise<{ order: RefundedOrder; refundId: string }> {
   return apiFetch<{ order: RefundedOrder; refundId: string }>(`/api/orders/${orderId}/refund`, {
     method: 'POST',
+    body: JSON.stringify({ workspaceId }),
   });
 }
 
@@ -176,8 +299,13 @@ export function fetchOrders(): Promise<Order[]> {
   return apiFetch<Order[]>('/api/orders');
 }
 
-export function fetchOrder(id: number): Promise<Order> {
-  return apiFetch<Order>(`/api/orders/${id}`);
+export function fetchOrdersByWorkspace(workspaceId: string): Promise<Order[]> {
+  return apiFetch<Order[]>(`/api/orders?workspaceId=${encodeURIComponent(workspaceId)}`);
+}
+
+export function fetchOrder(id: number, opts: { expand?: boolean } = {}): Promise<Order> {
+  const qs = opts.expand ? '?expand=true' : '';
+  return apiFetch<Order>(`/api/orders/${id}${qs}`);
 }
 
 export function createOrder(data: {
@@ -189,6 +317,151 @@ export function createOrder(data: {
     method: 'POST',
     body: JSON.stringify(data),
   });
+}
+
+// ── Baskets + checkout ─────────────────────────────────────────────────────
+
+export interface Basket {
+  id: string;
+  workspaceId: string;
+  txnId: string;
+  items: Array<{ productId: number; priceAtAdd: number; name?: string }>;
+  subtotal: number;
+  currency: 'INR';
+  status: 'open' | 'checked_out' | 'expired';
+}
+
+export function createBasket(workspaceId: string, productId: number): Promise<Basket> {
+  return apiFetch<Basket>('/api/baskets', {
+    method: 'POST',
+    body: JSON.stringify({ workspaceId, productId }),
+  });
+}
+
+export function addBasketItem(
+  workspaceId: string,
+  basketId: string,
+  productId: number,
+): Promise<Basket> {
+  return apiFetch<Basket>(`/api/baskets/${basketId}/items`, {
+    method: 'POST',
+    body: JSON.stringify({ workspaceId, productId }),
+  });
+}
+
+export function loadBasket(workspaceId: string, basketId: string): Promise<Basket> {
+  return apiFetch<Basket>(`/api/baskets/${basketId}?workspaceId=${encodeURIComponent(workspaceId)}`);
+}
+
+export interface CheckoutStartPolicy {
+  decision: 'auto_approved' | 'human_approval_required' | 'no_match';
+  amount: number;
+  buyer: { limit: number | null; exceeded: boolean };
+  merchant: { limit: number; exceeded: boolean };
+  triggeredBy: Array<'buyer_ceiling' | 'merchant_ceiling'>;
+  ceilingSource: 'buyer_ceiling' | 'merchant_ceiling' | 'both' | 'none';
+  requiresHumanApproval: boolean;
+  reasons: string[];
+}
+
+export interface CheckoutStartResponse {
+  orderId: number;
+  transactionId: string;
+  razorpayOrderId: string | null;
+  amount: number;
+  currency: string;
+  keyId: string;
+  policy: CheckoutStartPolicy;
+  evidence: string;
+  // True when the policy required a human override; the order is in
+  // pending_human_review. The frontend must call
+  // /api/checkout/human-approve/:orderId to mint the Razorpay order.
+  requiresHumanApproval?: boolean;
+}
+
+export function startCheckout(data: {
+  basketId: string;
+  workspaceId: string;
+}): Promise<CheckoutStartResponse> {
+  return apiFetch<CheckoutStartResponse>('/api/checkout/start', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+// Dedicated human-approve route. The only sanctioned way to flip a
+// `pending_human_review` order to `human_approved`; cannot be triggered
+// inline via /api/checkout/start.
+export interface HumanApproveResponse {
+  id: number;
+  status: string;
+  amount: number;
+  razorpayOrderId: string | null;
+  keyId: string | null;
+  currency: string;
+  transaction_id: string | null;
+  workspace_id: string | null;
+}
+export function humanApproveCheckout(orderId: number): Promise<HumanApproveResponse> {
+  return apiFetch<HumanApproveResponse>(`/api/checkout/human-approve/${orderId}`, {
+    method: 'POST',
+  });
+}
+
+// ── Buyer session + buyer orders ───────────────────────────────────────────
+
+export interface BuyerSession {
+  workspaceId: string;
+  maxSpend: number | null;
+  autonomy: 'recommend_only' | 'ask_before' | 'auto_up_to_limit';
+}
+
+export function fetchBuyerSession(workspaceId: string): Promise<BuyerSession> {
+  return apiFetch<BuyerSession>(`/api/buyer/session?workspaceId=${encodeURIComponent(workspaceId)}`);
+}
+
+export function updateBuyerSession(data: {
+  workspaceId: string;
+  maxSpend?: number | null;
+  autonomy?: BuyerSession['autonomy'];
+}): Promise<BuyerSession> {
+  return apiFetch<BuyerSession>('/api/buyer/session', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  });
+}
+
+export function fetchBuyerOrders(workspaceId: string): Promise<Order[]> {
+  return apiFetch<Order[]>(`/api/buyer/orders?workspaceId=${encodeURIComponent(workspaceId)}`);
+}
+
+// ── Activity feed + transaction detail ────────────────────────────────────
+
+export interface ActivityRow {
+  id: number;
+  timestamp: string;
+  actor: string;
+  action: string;
+  detail: string | null;
+  amount: number | null;
+  outcome: string;
+}
+
+export function fetchActivity(limit = 12, workspaceId?: string): Promise<ActivityRow[]> {
+  const qs = new URLSearchParams();
+  qs.set('limit', String(limit));
+  if (workspaceId) qs.set('workspaceId', workspaceId);
+  return apiFetch<ActivityRow[]>(`/api/activity?${qs.toString()}`);
+}
+
+export interface TransactionDetail {
+  transactionId: string;
+  orders: Order[];
+  audit: Array<ActivityRow & { transaction_id: string | null; workspace_id: string | null }>;
+}
+
+export function fetchTransactionDetail(txnId: string): Promise<TransactionDetail> {
+  return apiFetch<TransactionDetail>(`/api/transactions/${encodeURIComponent(txnId)}`);
 }
 
 // ── Buyer query / trace ────────────────────────────────────────────────────
@@ -212,12 +485,14 @@ export interface BuyerQueryResult {
     reason: string;
     category: string | null;
   }>;
+  policy?: CheckoutStartPolicy | null;
 }
 
 export interface BuyerQueryResponse {
   sessionId: string;
   steps: TraceStep[];
   result: BuyerQueryResult;
+  evidence?: string;
 }
 
 export function submitBuyerQuery(
@@ -236,6 +511,7 @@ export interface UpsellAcceptResponse {
   exceededCeiling: 'merchant' | 'buyer' | 'both' | null;
   merchantCap: number;
   buyerCap: number | null;
+  policy?: CheckoutStartPolicy | null;
 }
 
 export function acceptUpsell(data: {
@@ -251,37 +527,9 @@ export function acceptUpsell(data: {
 }
 
 /**
- * Open an SSE connection to stream trace steps for a session.
- * Calls `onStep` for each step, `onDone` when the trace completes,
- * and `onError` if the connection fails.
+ * Trace steps are returned in the POST /api/buyer/query response; no SSE.
+ * The /buyer/trace page reads `result.steps` from the cached query result.
  */
-export function subscribeTrace(
-  sessionId: string,
-  onStep: (step: TraceStep) => void,
-  onDone: (result: BuyerQueryResult) => void,
-  onError: (err: Event) => void,
-): () => void {
-  const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:5000';
-  const es = new EventSource(`${API_BASE}/api/buyer/trace/${sessionId}`);
-
-  es.onmessage = (ev) => {
-    try {
-      const data = JSON.parse(ev.data);
-      if (data.label === '__done') {
-        onDone(data.result);
-        es.close();
-      } else {
-        onStep(data as TraceStep);
-      }
-    } catch {
-      // ignore parse errors
-    }
-  };
-
-  es.onerror = onError;
-
-  return () => es.close();
-}
 
 // ── Settings ───────────────────────────────────────────────────────────────
 
@@ -328,8 +576,10 @@ export function createRazorpayOrder(data: {
   });
 }
 
-export function verifyOrder(orderId: number): Promise<Order> {
-  return apiFetch<Order>(`/api/checkout/verify/${orderId}`);
+export function verifyOrder(orderId: number, workspaceId?: string): Promise<Order> {
+  const ws = workspaceId?.trim() || '';
+  const qs = ws ? `?workspaceId=${encodeURIComponent(ws)}` : '';
+  return apiFetch<Order>(`/api/checkout/verify/${orderId}${qs}`);
 }
 
 // ── Audit log ──────────────────────────────────────────────────────────────
@@ -343,6 +593,9 @@ export interface AuditRow {
   detail: string | null;
   amount: number | null;
   outcome: string;
+  transaction_id?: string | null;
+  workspace_id?: string | null;
+  policy?: CheckoutStartPolicy | null;
 }
 
 export interface AuditResponse {
@@ -358,6 +611,8 @@ export function fetchAudit(
     to?: string;
     action?: string;
     outcome?: string;
+    transactionId?: string;
+    workspaceId?: string;
     limit?: number;
     offset?: number;
   } = {},
@@ -367,6 +622,8 @@ export function fetchAudit(
   if (params.to) qs.set('to', params.to);
   if (params.action) qs.set('action', params.action);
   if (params.outcome) qs.set('outcome', params.outcome);
+  if (params.transactionId) qs.set('transactionId', params.transactionId);
+  if (params.workspaceId) qs.set('workspaceId', params.workspaceId);
   if (params.limit) qs.set('limit', String(params.limit));
   if (params.offset) qs.set('offset', String(params.offset));
   const q = qs.toString();

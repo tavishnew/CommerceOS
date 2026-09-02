@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Commerce0S</title>
     <meta name="description" content="Commerce0S — built on Replit. Update this description to reflect the app." />
     <meta name="robots" content="index, follow" />
@@ -13,10 +13,32 @@
     <meta name="twitter:title" content="Commerce0S" />
     <meta name="twitter:description" content="Commerce0S — built on Replit. Update this description to reflect the app." />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+    <script>
+      // Pre-paint theme bootstrap — must run before any module script renders.
+      // Determines the user's theme from localStorage or system preference and
+      // applies the .dark class on <html> so the first paint matches the
+      // resolved theme (no FOUC, no light-then-dark flicker on reload).
+      (function () {
+        try {
+          var saved = localStorage.getItem('commerce0s-theme');
+          var theme =
+            saved === 'dark' || saved === 'light'
+              ? saved
+              : window.matchMedia &&
+                window.matchMedia('(prefers-color-scheme: dark)').matches
+                ? 'dark'
+                : 'light';
+          if (theme === 'dark') {
+            document.documentElement.classList.add('dark');
+          }
+          document.documentElement.dataset.theme = theme;
+        } catch (_) {
+          // localStorage unavailable — fall through to light default.
+          document.documentElement.dataset.theme = 'light';
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

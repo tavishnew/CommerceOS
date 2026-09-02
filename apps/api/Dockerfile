@@ -1,20 +1,16 @@
-FROM node:22-alpine AS deps
-WORKDIR /repo
-RUN apk add --no-cache python3 make g++
-COPY .npmrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY apps/api/package.json ./apps/api/
-RUN corepack enable && pnpm install --frozen-lockfile --filter api-server...
-
 FROM node:22-alpine AS dev
 WORKDIR /repo
 RUN apk add --no-cache python3 make g++
 RUN corepack enable
-COPY --from=deps /repo/node_modules ./node_modules
-COPY --from=deps /repo/apps/api/node_modules ./apps/api/node_modules
+COPY .npmrc package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY apps/api/package.json ./apps/api/
 COPY apps/api ./apps/api
-WORKDIR /repo/apps/api
+COPY apps/web/package.json ./apps/web/
+COPY apps/web ./apps/web
+RUN pnpm install --frozen-lockfile
 EXPOSE 5000
 ENV NODE_ENV=development
+WORKDIR /repo/apps/api
 CMD ["node", "/repo/node_modules/tsx/dist/cli.mjs", "watch", "src/index.ts"]
 
 FROM node:22-alpine AS build

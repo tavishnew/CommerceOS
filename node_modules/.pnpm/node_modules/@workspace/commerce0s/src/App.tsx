@@ -8,12 +8,14 @@ import {
   Bot,
   Box,
   Check,
+  ChevronDown,
   ChevronRight,
   Code2,
   Command,
   Copy,
   CreditCard,
   FileKey2,
+  FileSearch,
   FileText,
   Filter,
   Globe2,
@@ -32,6 +34,7 @@ import {
   RefreshCw,
   Search,
   Send,
+  Settings as SettingsIcon,
   Settings2,
   ShieldCheck,
   ShoppingBag,
@@ -95,6 +98,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import NotFound from '@/pages/not-found';
+import { cn } from '@/lib/utils';
+import { WorkspaceProvider, useWorkspace } from '@/hooks/use-workspace';
 import {
   type Product,
   type Order,
@@ -112,7 +117,6 @@ import {
   submitBuyerQuery,
   acceptUpsell,
   type UpsellAcceptResponse,
-  subscribeTrace,
   fetchSettings,
   updateSettings,
   createRazorpayOrder,
@@ -130,50 +134,27 @@ import {
   testRazorpaySettings,
   disputeOrder,
   refundOrder,
+  getOrCreateBuyerWorkspaceId,
+  createBasket,
+  startCheckout,
+  humanApproveCheckout,
+  fetchBuyerSession,
+  updateBuyerSession,
+  fetchBuyerOrders,
+  fetchActivity,
+  type ActivityRow,
+  fetchTransactionDetail,
+  type BuyerSession,
+  type Basket,
+  type CheckoutStartResponse,
+  type CheckoutStartPolicy,
+  type TransactionDetail,
 } from '@/lib/api';
 
 const queryClient = new QueryClient();
 
 type Theme = 'light' | 'dark';
 type Role = 'merchant' | 'buyer';
-
-const activities = [
-  {
-    time: '12:48:06',
-    kind: 'BUYER',
-    text: 'Found match for "warm task light, under $180"',
-    agent: 'buyer.northstar',
-    color: 'text-[hsl(var(--accent))]',
-  },
-  {
-    time: '12:47:52',
-    kind: 'POLICY',
-    text: 'Spend ceiling verified · $180.00',
-    agent: 'policy.guard',
-    color: 'text-[#d1c7aa]',
-  },
-  {
-    time: '12:47:49',
-    kind: 'SELLER',
-    text: 'Inventory reserved · Lattice Desk Lamp',
-    agent: 'seller.almond',
-    color: 'text-[hsl(var(--accent))]',
-  },
-  {
-    time: '12:47:41',
-    kind: 'TRACE',
-    text: '3 candidates scored · 1 shortlisted',
-    agent: 'router.core',
-    color: 'text-[#c4c0b3]',
-  },
-  {
-    time: '12:47:38',
-    kind: 'BUYER',
-    text: 'Intent parsed into 4 constraints',
-    agent: 'buyer.northstar',
-    color: 'text-[hsl(var(--accent))]',
-  },
-];
 
 const navMerchant = [
   { href: '/merchant', label: 'Overview', icon: LayoutGrid },
@@ -188,11 +169,8 @@ const navBuyer = [
   { href: '/buyer/trace', label: 'Decision Trace', icon: Activity },
   { href: '/buyer/checkout', label: 'Test Checkout', icon: CreditCard },
   { href: '/buyer/orders', label: 'Order History', icon: Package },
+  { href: '/buyer/settings', label: 'Settings', icon: SettingsIcon },
 ];
-
-function cn(...classes: Array<string | false | null | undefined>) {
-  return classes.filter(Boolean).join(' ');
-}
 
 function Logo({ inverse = false }: { inverse?: boolean }) {
   return (
@@ -201,7 +179,7 @@ function Logo({ inverse = false }: { inverse?: boolean }) {
         className={cn(
           'grid h-8 w-8 place-items-center rounded-[9px] border',
           inverse
-            ? 'border-[hsl(var(--accent)/.4)] bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))]'
+            ? 'border-[var(--commerce-border-strong)] bg-[var(--commerce-signal)] text-[var(--commerce-signal-foreground)]'
             : 'border-foreground/20 bg-foreground text-background',
         )}
       >
@@ -213,21 +191,24 @@ function Logo({ inverse = false }: { inverse?: boolean }) {
           inverse ? 'text-sidebar-foreground' : 'text-foreground',
         )}
       >
-        Commerce<span className="text-[hsl(var(--accent))]">0S</span>
+        Commerce<span className="text-[var(--commerce-signal)]">0S</span>
       </span>
     </Link>
   );
 }
 
 function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
+  const isDark = theme === 'dark';
   return (
     <button
       onClick={onToggle}
       className="group relative grid h-9 w-9 place-items-center rounded-full border border-foreground/15 bg-background text-muted-foreground transition hover:border-foreground/30 hover:text-foreground"
       data-testid="button-theme-toggle"
-      aria-label="Toggle theme"
+      aria-label={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
+      aria-pressed={isDark}
+      title={isDark ? 'Switch to light mode' : 'Switch to dark mode'}
     >
-      {theme === 'light' ? <Moon size={15} /> : <Sun size={15} />}
+      {isDark ? <Sun size={15} /> : <Moon size={15} />}
     </button>
   );
 }
@@ -238,7 +219,7 @@ function Pill({ children, signal = false }: { children: ReactNode; signal?: bool
       className={cn(
         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono-ui text-[10px] uppercase tracking-[.12em]',
         signal
-          ? 'border-[hsl(var(--accent)/.35)] bg-[hsl(var(--accent)/.1)] text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]'
+          ? 'border-[var(--commerce-signal)]/35 bg-[var(--commerce-signal)]/10 text-[var(--commerce-signal-strong)]'
           : 'border-foreground/15 bg-foreground/[.04] text-muted-foreground',
       )}
     >
@@ -278,6 +259,11 @@ function ButtonArrow({
 
 function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
   const [, setLocation] = useLocation();
+  const { data: liveRows = [] } = useQuery<ActivityRow[]>({
+    queryKey: ['activity', 'landing'],
+    queryFn: () => fetchActivity(4),
+    refetchInterval: 4000,
+  });
   return (
     <div className="grain min-h-[100dvh] overflow-hidden bg-background text-foreground">
       <header className="relative z-10 mx-auto flex max-w-[1240px] items-center justify-between px-5 py-5 sm:px-8 lg:px-10">
@@ -313,7 +299,10 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
 
       <main>
         <section className="relative mx-auto max-w-[1240px] px-5 pb-20 pt-16 sm:px-8 sm:pt-24 lg:px-10 lg:pb-32 lg:pt-28">
-          <div className="absolute -right-20 top-16 h-[420px] w-[420px] rounded-full bg-[hsl(var(--accent)/.06)] blur-3xl" />
+          <div
+            className="absolute -right-20 top-16 h-[420px] w-[420px] rounded-full blur-3xl"
+            style={{ background: 'color-mix(in oklab, var(--commerce-signal) 10%, transparent)' }}
+          />
           <div className="relative grid items-center gap-12 lg:grid-cols-[1.02fr_.98fr] lg:gap-16">
             <motion.div
               initial={{ opacity: 0, y: 16 }}
@@ -322,13 +311,16 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
               className="relative max-w-[800px]"
             >
               <Pill signal>
-                <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--accent))] status-live" />{' '}
+                <span
+                  className="h-1.5 w-1.5 rounded-full status-live"
+                  style={{ background: 'var(--commerce-signal)' }}
+                />{' '}
                 Protocol online · test mode
               </Pill>
-              <h1 className="mt-7 max-w-[820px] font-display text-[clamp(3.8rem,8vw,7.8rem)] font-bold leading-[.88] tracking-[-.075em]">
+              <h1 className="mt-7 max-w-[820px] font-display text-[clamp(3.8rem,8vw,7.8rem)] font-bold leading-[.88] tracking-[-.075em] text-[var(--commerce-ink)]">
                 Commerce,
                 <br />
-                <span className="text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
+                <span className="text-[var(--commerce-signal)]">
                   with agency.
                 </span>
               </h1>
@@ -359,26 +351,33 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
               aria-label="Live agent decision preview"
             >
               <div className="hero-console-glow absolute -inset-8 rounded-[38px] blur-3xl" />
-              <div className="relative overflow-hidden rounded-[26px] border border-foreground/15 bg-card/90 shadow-2xl backdrop-blur-xl">
-                <div className="flex items-center justify-between border-b border-foreground/10 px-5 py-4">
+              <div className="relative overflow-hidden rounded-[26px] border border-[var(--commerce-border)] bg-[var(--commerce-surface-raised)]/90 shadow-2xl backdrop-blur-xl">
+                <div className="flex items-center justify-between border-b border-[var(--commerce-border)] px-5 py-4">
                   <div className="flex items-center gap-2.5">
-                    <span className="grid h-8 w-8 place-items-center rounded-lg bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))]">
+                    <span
+                      className="grid h-8 w-8 place-items-center rounded-lg text-[var(--commerce-signal-foreground)]"
+                      style={{ background: 'var(--commerce-signal)' }}
+                    >
                       <Bot size={16} />
                     </span>
                     <div>
                       <p className="text-xs font-bold">Northstar / buyer agent</p>
-                      <p className="font-mono-ui text-[9px] uppercase tracking-[.12em] text-muted-foreground">
+                      <p className="font-mono-ui text-[9px] uppercase tracking-[.12em] text-[var(--commerce-text-muted)]">
                         decision stream · live
                       </p>
                     </div>
                   </div>
                   <Pill signal>
-                    <span className="h-1.5 w-1.5 rounded-full bg-current status-live" /> online
+                    <span
+                      className="h-1.5 w-1.5 rounded-full status-live"
+                      style={{ background: 'var(--commerce-signal)' }}
+                    />{' '}
+                    online
                   </Pill>
                 </div>
                 <div className="space-y-4 p-5">
-                  <div className="rounded-xl bg-muted p-4">
-                    <p className="font-mono-ui text-[9px] uppercase tracking-[.13em] text-muted-foreground">
+                  <div className="rounded-xl bg-[var(--commerce-surface-sunken)] p-4">
+                    <p className="font-mono-ui text-[9px] uppercase tracking-[.13em] text-[var(--commerce-text-muted)]">
                       incoming intent
                     </p>
                     <p className="mt-2 text-sm font-semibold">Find a warm task light under $180.</p>
@@ -394,23 +393,33 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
                         initial={{ opacity: 0, x: 10 }}
                         animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: 0.65 + i * 0.16 }}
-                        className="relative flex gap-3 border-l border-[hsl(var(--accent)/.45)] pl-4"
+                        className="relative flex gap-3 pl-4"
+                        style={{ borderLeft: '2px solid color-mix(in oklab, var(--commerce-signal) 55%, transparent)' }}
                       >
-                        <span className="font-mono-ui text-[10px] text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
+                        <span
+                          className="font-mono-ui text-[10px]"
+                          style={{ color: 'var(--commerce-signal-strong)' }}
+                        >
                           {num}
                         </span>
                         <div>
                           <p className="text-xs font-semibold">{title}</p>
-                          <p className="mt-0.5 font-mono-ui text-[9px] text-muted-foreground">
+                          <p className="mt-0.5 font-mono-ui text-[9px] text-[var(--commerce-text-muted)]">
                             {detail}
                           </p>
                         </div>
                       </motion.div>
                     ))}
                   </div>
-                  <div className="flex items-center justify-between rounded-xl border border-[hsl(var(--accent)/.4)] bg-[hsl(var(--accent)/.08)] p-4">
+                  <div
+                    className="flex items-center justify-between rounded-xl border p-4"
+                    style={{
+                      borderColor: 'color-mix(in oklab, var(--commerce-signal) 50%, transparent)',
+                      background: 'color-mix(in oklab, var(--commerce-signal) 10%, transparent)',
+                    }}
+                  >
                     <div>
-                      <p className="font-mono-ui text-[9px] uppercase tracking-[.13em] text-muted-foreground">
+                      <p className="font-mono-ui text-[9px] uppercase tracking-[.13em] text-[var(--commerce-text-muted)]">
                         recommendation
                       </p>
                       <p className="mt-1 text-sm font-bold">Lattice Desk Lamp</p>
@@ -418,11 +427,9 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
                     <span className="font-display text-xl font-bold">$148</span>
                   </div>
                 </div>
-                <div className="flex items-center justify-between border-t border-foreground/10 px-5 py-3 font-mono-ui text-[9px] uppercase tracking-[.12em] text-muted-foreground">
+                <div className="flex items-center justify-between border-t border-[var(--commerce-border)] px-5 py-3 font-mono-ui text-[9px] uppercase tracking-[.12em] text-[var(--commerce-text-muted)]">
                   <span>trace_8f31c0a9</span>
-                  <span className="text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
-                    explainable
-                  </span>
+                  <span className="text-[var(--commerce-signal-strong)]">explainable</span>
                 </div>
               </div>
             </motion.div>
@@ -431,16 +438,25 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
             initial={{ opacity: 0, y: 30, rotate: -2 }}
             animate={{ opacity: 1, y: 0, rotate: 0 }}
             transition={{ duration: 0.8, delay: 0.2 }}
-            className="network-stage relative mt-20 h-[310px] overflow-hidden rounded-[28px] border border-foreground/15 bg-foreground/[.025] sm:h-[390px] lg:mt-24"
+            className="network-stage relative mt-20 h-[310px] overflow-hidden rounded-[28px] border border-[var(--commerce-border)] bg-[var(--commerce-surface-sunken)] sm:h-[390px] lg:mt-24"
             aria-label="Live Commerce0S agent network map"
           >
-            <div className="absolute left-5 top-5 flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.14em] text-muted-foreground">
-              <span className="h-2 w-2 rounded-full bg-[hsl(var(--accent))]" /> live network map{' '}
-              <span className="ml-2 opacity-40">/ 04 nodes</span>
+            <div className="absolute left-5 top-5 flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.14em] text-[var(--commerce-text-muted)]">
+              <span
+                className="h-2 w-2 rounded-full"
+                style={{ background: 'var(--commerce-signal)' }}
+              />{' '}
+              live network map <span className="ml-2 opacity-40">/ 04 nodes</span>
             </div>
             <div className="wireframe absolute inset-0 grid place-items-center [perspective:1200px]">
-              <div className="network-aurora absolute -left-16 top-10 h-56 w-56 rounded-full bg-[hsl(var(--accent)/.15)] blur-3xl" />
-              <div className="network-aurora network-aurora-delay absolute -right-16 bottom-0 h-64 w-64 rounded-full bg-[hsl(var(--accent)/.10)] blur-3xl" />
+              <div
+                className="network-aurora absolute -left-16 top-10 h-56 w-56 rounded-full blur-3xl"
+                style={{ background: 'color-mix(in oklab, var(--commerce-signal) 20%, transparent)' }}
+              />
+              <div
+                className="network-aurora network-aurora-delay absolute -right-16 bottom-0 h-64 w-64 rounded-full blur-3xl"
+                style={{ background: 'color-mix(in oklab, var(--commerce-signal) 14%, transparent)' }}
+              />
               <div className="wireframe-grid absolute h-[500px] w-[950px] rounded-[50%] opacity-70 [transform:rotateX(64deg)_rotateZ(-8deg)_translateY(40px)]" />
               <svg
                 className="network-lines absolute inset-0 h-full w-full opacity-70"
@@ -457,22 +473,44 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
               <div className="network-particle particle-two" />
               <div className="network-particle particle-three" />
               <div className="relative z-10 grid place-items-center [transform:translateZ(60px)]">
-                <div className="network-orbit network-orbit-wide absolute h-[220px] w-[420px] rounded-[50%] border border-[hsl(var(--accent)/.28)]" />
-                <div className="network-orbit absolute h-[180px] w-[260px] rounded-[50%] border border-[hsl(var(--accent)/.48)]" />
-                <div className="absolute h-[210px] w-[210px] rounded-full border border-[hsl(var(--accent)/.28)] animate-pulse" />
-                <div className="absolute h-[120px] w-[120px] rounded-full border border-[hsl(var(--accent)/.55)]" />
-                <div className="network-core grid h-20 w-20 place-items-center rounded-2xl border border-[hsl(var(--accent)/.5)] bg-[hsl(var(--accent)/.17)] shadow-[0_0_80px_hsl(var(--accent)/.22)]">
-                  <Command size={28} className="text-[hsl(var(--accent))]" />
+                <div
+                  className="network-orbit network-orbit-wide absolute h-[220px] w-[420px] rounded-[50%]"
+                  style={{ border: '1px solid color-mix(in oklab, var(--commerce-signal) 35%, transparent)' }}
+                />
+                <div
+                  className="network-orbit absolute h-[180px] w-[260px] rounded-[50%]"
+                  style={{ border: '1px solid color-mix(in oklab, var(--commerce-signal) 55%, transparent)' }}
+                />
+                <div
+                  className="absolute h-[210px] w-[210px] rounded-full animate-pulse"
+                  style={{ border: '1px solid color-mix(in oklab, var(--commerce-signal) 35%, transparent)' }}
+                />
+                <div
+                  className="absolute h-[120px] w-[120px] rounded-full"
+                  style={{ border: '1px solid color-mix(in oklab, var(--commerce-signal) 60%, transparent)' }}
+                />
+                <div
+                  className="network-core grid h-20 w-20 place-items-center rounded-2xl"
+                  style={{
+                    border: '1px solid color-mix(in oklab, var(--commerce-signal) 60%, transparent)',
+                    background: 'color-mix(in oklab, var(--commerce-signal) 18%, transparent)',
+                    boxShadow: '0 0 80px color-mix(in oklab, var(--commerce-signal) 28%, transparent)',
+                  }}
+                >
+                  <Command size={28} style={{ color: 'var(--commerce-signal)' }} />
                 </div>
-                <span className="absolute top-[92px] whitespace-nowrap font-mono-ui text-[10px] uppercase tracking-[.16em] text-[hsl(var(--accent))]">
+                <span
+                  className="absolute top-[92px] whitespace-nowrap font-mono-ui text-[10px] uppercase tracking-[.16em]"
+                  style={{ color: 'var(--commerce-signal)' }}
+                >
                   routing intelligence
                 </span>
               </div>
               {[
-                ['buyer.northstar', 'top-[22%] left-[15%]', 'text-[hsl(var(--accent))]'],
-                ['seller.almond', 'right-[12%] top-[28%]', 'text-[#d1c7aa]'],
-                ['policy.guard', 'bottom-[24%] left-[24%]', 'text-[#c4c0b3]'],
-                ['ledger.test', 'bottom-[17%] right-[19%]', 'text-[#b5aaa0]'],
+                ['buyer.northstar', 'top-[22%] left-[15%]', 'text-[var(--commerce-signal)]'],
+                ['seller.almond', 'right-[12%] top-[28%]', 'text-[var(--commerce-text-muted)]'],
+                ['policy.guard', 'bottom-[24%] left-[24%]', 'text-[var(--commerce-text-muted)]/70'],
+                ['ledger.test', 'bottom-[17%] right-[19%]', 'text-[var(--commerce-text-muted)]/55'],
               ].map(([name, pos, color], i) => (
                 <motion.div
                   key={name}
@@ -532,7 +570,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
                 ] as Array<{ num: string; title: string; text: string; Icon: typeof Search }>
               ).map(({ num, title, text, Icon }) => (
                 <div key={num} className="bg-background p-6 sm:p-7">
-                  <span className="font-mono-ui text-[10px] text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
+                  <span className="font-mono-ui text-[10px] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
                     {num}
                   </span>
                   <Icon className="mt-12 text-muted-foreground" size={19} />
@@ -562,28 +600,36 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
             </p>
           </div>
           <div className="mt-14 grid gap-4 lg:grid-cols-[1.35fr_.65fr]">
-            <div className="relative min-h-[370px] overflow-hidden rounded-3xl border border-white/10 bg-[#1b2225] p-7 text-[#ece7d9]">
-              <div className="absolute inset-0 opacity-40 grid-paper" />
+            <div className="relative min-h-[370px] overflow-hidden rounded-3xl border border-[var(--commerce-border-strong)] bg-[var(--commerce-surface-sunken)] p-7 text-[var(--commerce-ink)]">
               <div className="relative">
-                <div className="flex items-center justify-between border-b border-white/10 pb-4 font-mono-ui text-[10px] uppercase tracking-[.14em]">
-                  <span className="text-white/50">agent activity / now</span>
-                  <span className="text-[hsl(var(--accent))]">● recording</span>
+                <div className="flex items-center justify-between border-b border-[var(--commerce-border)] pb-4 font-mono-ui text-[10px] uppercase tracking-[.14em]">
+                  <span className="text-[var(--commerce-text-muted)]">agent activity / now</span>
+                  <span className="text-[var(--commerce-signal)]">● recording</span>
                 </div>
                 <div className="mt-7 space-y-5">
-                  {activities.slice(0, 4).map((a, i) => (
+                  {liveRows.length === 0 && (
+                    <p className="font-mono-ui text-[11px] text-[var(--commerce-text-muted)]">
+                      No protocol events yet. Run a buyer query to populate the trail.
+                    </p>
+                  )}
+                  {liveRows.map((a, i) => (
                     <motion.div
                       initial={{ opacity: 0, x: -10 }}
                       whileInView={{ opacity: 1, x: 0 }}
                       viewport={{ once: true }}
                       transition={{ delay: i * 0.12 }}
-                      key={a.time}
-                      className="flex gap-3 border-l border-white/10 pl-4"
+                      key={a.id}
+                      className="flex gap-3 border-l border-[var(--commerce-border)] pl-4"
                     >
-                      <span className="font-mono-ui text-[10px] text-white/35">{a.time}</span>
+                      <span className="font-mono-ui text-[10px] text-[var(--commerce-text-muted)]">
+                        {new Date(a.timestamp).toLocaleTimeString()}
+                      </span>
                       <div>
-                        <p className="font-mono-ui text-xs text-white/80">{a.text}</p>
-                        <p className={cn('mt-1 font-mono-ui text-[10px]', a.color)}>
-                          {a.agent} · {a.kind}
+                        <p className="font-mono-ui text-xs text-[var(--commerce-text)]">
+                          {a.detail ?? a.action}
+                        </p>
+                        <p className="mt-1 font-mono-ui text-[10px] text-[var(--commerce-text-muted)]">
+                          {a.actor} · {a.action}
                         </p>
                       </div>
                     </motion.div>
@@ -591,7 +637,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
                 </div>
               </div>
             </div>
-            <div className="flex min-h-[370px] flex-col justify-between rounded-3xl border border-foreground/15 bg-[hsl(var(--accent))] p-7 text-[hsl(var(--accent-foreground))]">
+            <div className="flex min-h-[370px] flex-col justify-between rounded-3xl border border-foreground/15 bg-[var(--commerce-signal)] p-7 text-[var(--commerce-signal-foreground)]">
               <div>
                 <div className="flex items-center justify-between">
                   <Bot size={23} />
@@ -617,7 +663,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
 
         <section
           id="trust"
-          className="border-y border-foreground/10 bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))]"
+          className="border-y border-foreground/10 bg-[var(--commerce-signal)] text-[var(--commerce-signal-foreground)]"
         >
           <div className="mx-auto grid max-w-[1240px] gap-14 px-5 py-20 sm:px-8 lg:grid-cols-[1fr_.9fr] lg:px-10 lg:py-28">
             <div>
@@ -633,7 +679,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
               </p>
               <div className="mt-8 flex flex-wrap gap-2">
                 <span className="rounded-full border border-foreground/20 px-3 py-2 font-mono-ui text-[10px]">
-                  SIGNED INTENT
+                  TRACED INTENT
                 </span>
                 <span className="rounded-full border border-foreground/20 px-3 py-2 font-mono-ui text-[10px]">
                   POLICY-GATED
@@ -741,7 +787,7 @@ function Auth({
                 className={cn(
                   'rounded-xl border p-4 text-left transition',
                   role === 'merchant'
-                    ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.12)]'
+                    ? 'border-[var(--commerce-signal)] bg-[var(--commerce-signal)]/10'
                     : 'border-foreground/15 hover:border-foreground/30',
                 )}
                 data-testid="button-role-merchant"
@@ -757,7 +803,7 @@ function Auth({
                 className={cn(
                   'rounded-xl border p-4 text-left transition',
                   role === 'buyer'
-                    ? 'border-[hsl(var(--accent))] bg-[hsl(var(--accent)/.12)]'
+                    ? 'border-[var(--commerce-signal)] bg-[var(--commerce-signal)]/10'
                     : 'border-foreground/15 hover:border-foreground/30',
                 )}
                 data-testid="button-role-buyer"
@@ -773,7 +819,7 @@ function Auth({
           <label className="mt-6 block text-xs font-semibold">
             Email address
             <input
-              className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus:border-[hsl(var(--accent))]"
+              className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus:border-[var(--commerce-signal)]"
               placeholder="you@company.com"
               data-testid="input-auth-email"
             />
@@ -782,7 +828,7 @@ function Auth({
             <label className="mt-4 block text-xs font-semibold">
               Workspace name
               <input
-                className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus:border-[hsl(var(--accent))]"
+                className="mt-2 h-11 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none transition focus:border-[var(--commerce-signal)]"
                 placeholder="Studio or team name"
                 data-testid="input-workspace-name"
               />
@@ -835,7 +881,7 @@ function Sidebar({
     >
       <div className="flex h-[76px] items-center border-b border-sidebar-border px-5">
         {collapsed ? (
-          <span className="grid h-8 w-8 place-items-center rounded-[9px] bg-[hsl(var(--accent))] font-display font-bold text-[hsl(var(--accent-foreground))]">
+          <span className="grid h-8 w-8 place-items-center rounded-[9px] bg-[var(--commerce-signal)] font-display font-bold text-[var(--commerce-signal-foreground)]">
             0
           </span>
         ) : (
@@ -873,7 +919,7 @@ function Sidebar({
               <Icon size={17} strokeWidth={active ? 2.2 : 1.8} />
               <span className={cn(collapsed && 'hidden')}>{label}</span>
               {active && !collapsed && (
-                <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[hsl(var(--accent))]" />
+                <span className="ml-auto h-1.5 w-1.5 rounded-full bg-[var(--commerce-signal)]" />
               )}
             </Link>
           );
@@ -935,9 +981,10 @@ function Topbar({
         <button
           onClick={onMobileMenu}
           className="grid h-9 w-9 place-items-center rounded-lg border border-foreground/15 lg:hidden"
+          aria-label="Open navigation menu"
           data-testid="button-open-mobile-nav"
         >
-          <Menu size={17} />
+          <Menu size={17} aria-hidden="true" />
         </button>
         <div className="hidden items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground sm:flex">
           <span className="text-foreground">
@@ -1036,7 +1083,7 @@ function MetricCard({
       className={cn(
         'rounded-2xl border p-5',
         signal
-          ? 'border-[hsl(var(--accent)/.4)] bg-[hsl(var(--accent)/.1)]'
+          ? 'border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10'
           : 'border-foreground/10 bg-card',
       )}
     >
@@ -1048,7 +1095,7 @@ function MetricCard({
           size={16}
           className={
             signal
-              ? 'text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]'
+              ? 'text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]'
               : 'text-muted-foreground'
           }
         />
@@ -1059,7 +1106,7 @@ function MetricCard({
           className={cn(
             'font-mono-ui text-[10px]',
             signal
-              ? 'text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]'
+              ? 'text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]'
               : 'text-muted-foreground',
           )}
         >
@@ -1082,11 +1129,11 @@ function MerchantOverview() {
     <div className="space-y-7">
       {showBanner && (
         <div
-          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-500/40 bg-amber-500/5 px-4 py-3 sm:px-5"
+          className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-warning/40 bg-warning/5 px-4 py-3 sm:px-5"
           data-testid="banner-payment-not-configured"
         >
           <div className="flex items-start gap-3">
-            <AlertTriangle size={18} className="mt-0.5 text-amber-600 dark:text-amber-400" />
+            <AlertTriangle size={18} className="mt-0.5 text-warning" />
             <div>
               <p className="text-sm font-semibold text-foreground">
                 Payment gateway not configured
@@ -1099,7 +1146,7 @@ function MerchantOverview() {
           <Button
             onClick={() => setLocation('/merchant/settings#payment-gateway')}
             variant="outline"
-            className="h-9 rounded-full border-amber-500/40 px-4 text-xs font-semibold text-amber-700 hover:bg-amber-500/10 dark:text-amber-300"
+            className="h-9 rounded-full border-warning/40 px-4 text-xs font-semibold text-warning hover:bg-warning/10"
             data-testid="button-banner-open-settings"
           >
             Open settings
@@ -1120,6 +1167,9 @@ function MerchantOverview() {
         }
       />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <p className="col-span-full -mb-1 text-right text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+          Sample data — not live
+        </p>
         <MetricCard
           label="Gross volume"
           value="$18,426"
@@ -1139,15 +1189,15 @@ function MerchantOverview() {
               <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
                 Decision mix
               </p>
-              <h3 className="mt-2 font-display text-xl font-bold">This month</h3>
+              <h3 className="mt-2 font-display text-xl font-bold">This month · sample data</h3>
             </div>
             <MoreHorizontal size={17} className="text-muted-foreground" />
           </div>
           <div className="mt-8 space-y-5">
             {[
-              ['Auto-approved', '72%', 'bg-[hsl(var(--accent))]'],
-              ['Human review', '19%', 'bg-[#d1c7aa]'],
-              ['Declined', '9%', 'bg-[#b5aaa0]'],
+              ['Auto-approved', '72%', 'bg-[var(--commerce-signal)]'],
+              ['Human review', '19%', 'bg-[var(--commerce-text-muted)]'],
+              ['Declined', '9%', 'bg-[var(--commerce-text-muted)]/55'],
             ].map(([label, value, color]) => (
               <div key={label}>
                 <div className="flex justify-between text-xs">
@@ -1200,6 +1250,21 @@ function PageHeading({
 }
 
 function ActivityPanel() {
+  const [, setLocation] = useLocation();
+  const { data: rows = [], isLoading, isError, dataUpdatedAt } = useQuery<ActivityRow[]>({
+    queryKey: ['activity', 'overview'],
+    queryFn: () => fetchActivity(6),
+    refetchInterval: 3000,
+  });
+
+  const outcomeColor = (o: string) => {
+    if (o === 'success' || o === 'auto_approved' || o === 'approved' || o === 'recovered')
+      return 'text-positive';
+    if (o === 'failed' || o === 'degraded' || o === 'human_approval_required')
+      return 'text-warning';
+    return 'text-muted-foreground';
+  };
+
   return (
     <div className="rounded-2xl border border-foreground/10 bg-card p-5">
       <div className="flex items-center justify-between">
@@ -1209,40 +1274,70 @@ function ActivityPanel() {
           </p>
           <h3 className="mt-2 font-display text-xl font-bold">Agent activity</h3>
         </div>
-        <Pill signal>
-          <span className="h-1.5 w-1.5 rounded-full bg-current" /> live
+        <Pill signal={!isError && !isLoading}>
+          <span className="h-1.5 w-1.5 rounded-full bg-current" /> {isError ? 'offline' : isLoading ? 'loading' : 'live'}
         </Pill>
       </div>
-      <div className="mt-7 space-y-1">
-        {activities.map((a, i) => (
+      <div className="mt-7 space-y-1" data-testid="activity-list">
+        {isLoading && rows.length === 0 && (
+          <div className="grid place-items-center py-8">
+            <Loader2 size={18} className="animate-spin text-muted-foreground" />
+          </div>
+        )}
+        {isError && (
+          <p className="py-6 text-sm text-muted-foreground">
+            Couldn't reach the activity feed. Pull to retry.
+          </p>
+        )}
+        {!isLoading && !isError && rows.length === 0 && (
+          <p className="py-6 text-sm text-muted-foreground">
+            No activity yet. Run a buyer query to populate the trail.
+          </p>
+        )}
+        {rows.map((a, i) => (
           <div
-            key={a.time}
+            key={a.id}
             className="group flex items-start gap-3 rounded-xl px-2 py-3 transition hover:bg-muted/60"
             data-testid={`activity-row-${i}`}
           >
-            <span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[hsl(var(--accent))]" />
+            <span
+              className={cn(
+                'mt-1 h-2 w-2 shrink-0 rounded-full',
+                a.outcome === 'failed' || a.outcome === 'degraded'
+                  ? 'bg-warning'
+                  : 'bg-positive',
+              )}
+            />
             <span className="w-[62px] shrink-0 font-mono-ui text-[10px] text-muted-foreground">
-              {a.time}
+              {new Date(a.timestamp).toLocaleTimeString()}
             </span>
             <div className="min-w-0 flex-1">
-              <p className="truncate text-xs font-medium">{a.text}</p>
-              <p className={cn('mt-1 font-mono-ui text-[9px] uppercase tracking-[.08em]', a.color)}>
-                {a.agent} <span className="text-muted-foreground">· {a.kind}</span>
+              <p className="truncate text-xs font-medium">{a.detail ?? a.action}</p>
+              <p className={cn('mt-1 font-mono-ui text-[9px] uppercase tracking-[.08em]', outcomeColor(a.outcome))}>
+                {a.actor} <span className="text-muted-foreground">· {a.action}</span>
               </p>
             </div>
-            <ChevronRight
-              size={14}
-              className="mt-1 text-muted-foreground opacity-0 transition group-hover:opacity-100"
-            />
+            {a.actor && (
+              <ChevronRight
+                size={14}
+                className="mt-1 text-muted-foreground opacity-0 transition group-hover:opacity-100"
+              />
+            )}
           </div>
         ))}
       </div>
-      <button
-        className="mt-3 flex items-center gap-1 px-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground hover:text-foreground"
-        data-testid="button-view-all-activity"
-      >
-        View full activity <ArrowRight size={12} />
-      </button>
+      <div className="mt-2 flex items-center justify-between px-2">
+        <span className="font-mono-ui text-[9px] text-muted-foreground">
+          {dataUpdatedAt ? `refreshed ${new Date(dataUpdatedAt).toLocaleTimeString()}` : ''}
+        </span>
+        <button
+          onClick={() => setLocation('/merchant/activity')}
+          className="flex items-center gap-1 font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground hover:text-foreground"
+          data-testid="button-view-all-activity"
+        >
+          View full activity <ArrowRight size={12} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -1252,7 +1347,9 @@ function ActivityPanel() {
 function Catalog() {
   const queryClient = useQueryClient();
   const [query, setQuery] = useState('');
-  const [filter, setFilter] = useState<'All' | 'Live' | 'Draft'>('All');
+  const [filter, setFilter] = useState<'all' | 'active' | 'draft' | 'out_of_stock' | 'archived'>(
+    'all',
+  );
   const [modal, setModal] = useState<Product | 'new' | null>(null);
 
   const {
@@ -1271,12 +1368,20 @@ function Catalog() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['catalog'] }),
   });
 
-  const visible = products.filter((p) => {
-    const status = p.status ?? 'Live';
-    const matchesFilter = filter === 'All' || status === filter;
-    const matchesQuery = `${p.name} ${p.sku}`.toLowerCase().includes(query.toLowerCase());
-    return matchesFilter && matchesQuery;
-  });
+  // Map raw product → canonical display status so the UI doesn't lie about
+  // stock or archive state. Backend uses availability + inventory_quantity;
+  // anything in 'archived' is hidden from agents.
+  const displayStatus = (p: Product) => {
+    if (p.status === 'archived') return 'archived' as const;
+    if (!p.inStock || p.quantity <= 0) return 'out_of_stock' as const;
+    if (p.status === 'draft') return 'draft' as const;
+    return 'active' as const;
+  };
+
+  const visible = products
+    .map((p) => ({ p, ds: displayStatus(p) }))
+    .filter(({ ds }) => filter === 'all' || ds === filter)
+    .filter(({ p }) => `${p.name} ${p.sku}`.toLowerCase().includes(query.toLowerCase()));
 
   return (
     <div className="space-y-6">
@@ -1302,20 +1407,28 @@ function Catalog() {
             data-testid="input-catalog-search"
           />
         </div>
-        <div className="flex items-center gap-1 rounded-lg border border-foreground/10 bg-card p-1">
-          {(['All', 'Live', 'Draft'] as const).map((x) => (
+        <div className="flex flex-wrap items-center gap-1 rounded-lg border border-foreground/10 bg-card p-1">
+          {(
+            [
+              ['all', 'All'],
+              ['active', 'Active'],
+              ['draft', 'Draft'],
+              ['out_of_stock', 'Out'],
+              ['archived', 'Archived'],
+            ] as const
+          ).map(([key, label]) => (
             <button
-              key={x}
-              onClick={() => setFilter(x)}
+              key={key}
+              onClick={() => setFilter(key)}
               className={cn(
                 'rounded-md px-3 py-1.5 font-mono-ui text-[10px] uppercase tracking-[.1em]',
-                filter === x
+                filter === key
                   ? 'bg-foreground text-background'
                   : 'text-muted-foreground hover:text-foreground',
               )}
-              data-testid={`button-filter-${x.toLowerCase()}`}
+              data-testid={`button-filter-${key}`}
             >
-              {x}
+              {label}
             </button>
           ))}
         </div>
@@ -1380,7 +1493,7 @@ function Catalog() {
         {/* Product rows */}
         {!isLoading &&
           !error &&
-          visible.map((p) => (
+          visible.map(({ p, ds }) => (
             <div
               key={p.id}
               className="grid gap-3 border-b border-foreground/10 px-5 py-4 last:border-0 sm:grid-cols-[1.4fr_1fr_.7fr_.6fr_.3fr] sm:items-center"
@@ -1398,11 +1511,13 @@ function Catalog() {
                 </div>
               </div>
               <span className="font-mono-ui text-[11px] text-muted-foreground">{p.sku}</span>
-              <span className="text-sm font-semibold">${p.price.toFixed(2)}</span>
+              <span className="text-sm font-semibold">₹{p.price.toFixed(2)}</span>
               <span>
-                <Pill signal={(p.status ?? 'Live') === 'Live'}>
+                <Pill
+                  signal={ds === 'active'}
+                >
                   <span className="h-1.5 w-1.5 rounded-full bg-current" />
-                  {p.status ?? 'Live'}
+                  {ds === 'out_of_stock' ? 'Out' : ds.charAt(0).toUpperCase() + ds.slice(1)}
                 </Pill>
               </span>
               <button
@@ -1430,8 +1545,15 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
   const { toast } = useToast();
   const [name, setName] = useState(product?.name ?? '');
   const [sku, setSku] = useState(product?.sku ?? '');
-  const [price, setPrice] = useState(product ? String(product.price) : '$');
+  const [price, setPrice] = useState(product ? String(product.price) : '');
   const [stock, setStock] = useState(String(product?.quantity ?? 1));
+  const [status, setStatus] = useState<'active' | 'draft' | 'archived'>(
+    product?.status === 'archived'
+      ? 'archived'
+      : product?.status === 'draft'
+        ? 'draft'
+        : 'active',
+  );
   const [schema, setSchema] = useState(false);
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -1468,6 +1590,7 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
         sku: sku.trim(),
         price: parsedPrice,
         quantity: parsedStock,
+        status,
       };
 
       if (product) {
@@ -1560,7 +1683,7 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
                 if (fieldError?.field === 'name') setFieldError(null);
               }}
               className={cn(
-                'mt-2 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-[hsl(var(--accent))]',
+                'mt-2 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-[var(--commerce-signal)]',
                 fieldError?.field === 'name' ? 'border-destructive' : 'border-input',
               )}
               data-testid="input-product-name"
@@ -1583,7 +1706,7 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
                 if (fieldError?.field === 'sku') setFieldError(null);
               }}
               className={cn(
-                'mt-2 h-10 w-full rounded-lg border bg-background px-3 font-mono-ui text-xs outline-none focus:border-[hsl(var(--accent))]',
+                'mt-2 h-10 w-full rounded-lg border bg-background px-3 font-mono-ui text-xs outline-none focus:border-[var(--commerce-signal)]',
                 fieldError?.field === 'sku' ? 'border-destructive' : 'border-input',
               )}
               data-testid="input-product-sku"
@@ -1606,7 +1729,7 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
                 if (fieldError?.field === 'price') setFieldError(null);
               }}
               className={cn(
-                'mt-2 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-[hsl(var(--accent))]',
+                'mt-2 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-[var(--commerce-signal)]',
                 fieldError?.field === 'price' ? 'border-destructive' : 'border-input',
               )}
               data-testid="input-product-price"
@@ -1630,7 +1753,7 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
               }}
               type="number"
               className={cn(
-                'mt-2 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-[hsl(var(--accent))]',
+                'mt-2 h-10 w-full rounded-lg border bg-background px-3 text-sm outline-none focus:border-[var(--commerce-signal)]',
                 fieldError?.field === 'stock' ? 'border-destructive' : 'border-input',
               )}
               data-testid="input-product-stock"
@@ -1644,6 +1767,19 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
               </span>
             )}
           </label>
+          <label className="text-xs font-semibold">
+            Status
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as 'active' | 'draft' | 'archived')}
+              className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 text-sm outline-none focus:border-[var(--commerce-signal)]"
+              data-testid="select-product-status"
+            >
+              <option value="active">Active — visible to agents</option>
+              <option value="draft">Draft — hidden from agents</option>
+              <option value="archived">Archived — removed from agents</option>
+            </select>
+          </label>
           <div className="flex items-end">
             <button
               onClick={() => setSchema((v) => !v)}
@@ -1655,7 +1791,7 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
           </div>
         </div>
         {schema && (
-          <pre className="mt-5 overflow-auto rounded-xl bg-[#1b2225] p-4 font-mono-ui text-[10px] leading-5 text-[#dfe9cf]">{`{\n  "type": "product",\n  "name": "${name || '…'}",\n  "sku": "${sku || '…'}",\n  "price": { "amount": "${price || '…'}", "currency": "USD" },\n  "availability": ${Number(stock || 0) > 0}\n}`}</pre>
+          <pre className="mt-5 overflow-auto rounded-xl bg-[var(--commerce-surface-sunken)] p-4 font-mono-ui text-[10px] leading-5 text-[var(--commerce-ink)]">{`{\n  "type": "product",\n  "name": "${name || '…'}",\n  "sku": "${sku || '…'}",\n  "price": { "amount": "${price || '…'}", "currency": "INR" },\n  "availability": ${Number(stock || 0) > 0},\n  "status": "${status}"\n}`}</pre>
         )}
         <div className="mt-7 flex items-center justify-between gap-3">
           {product ? (
@@ -1696,11 +1832,19 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
 
 // ── Orders (wired to real API) ──────────────────────────────────────────────
 
-function OrderRow({ order, onAction }: { order: Order; onAction: () => void }) {
+function OrderRow({
+  order,
+  onAction,
+  onSelect,
+}: {
+  order: Order;
+  onAction: () => void;
+  onSelect?: () => void;
+}) {
   const { toast } = useToast();
   const [disputing, setDisputing] = useState(false);
   const [refunding, setRefunding] = useState(false);
-  const formatAmount = (n: number) => `$${n.toFixed(2)}`;
+  const formatAmount = (n: number) => `₹${n.toFixed(2)}`;
   const formatTime = (iso: string) => {
     const d = new Date(iso);
     const now = new Date();
@@ -1718,7 +1862,7 @@ function OrderRow({ order, onAction }: { order: Order; onAction: () => void }) {
     if (!reason) return;
     setDisputing(true);
     try {
-      await disputeOrder(order.id, reason.trim().slice(0, 500));
+      await disputeOrder(order.id, reason.trim().slice(0, 500), getOrCreateBuyerWorkspaceId());
       toast({ title: 'Dispute opened', description: `Order #${order.id} flagged for review.` });
       onAction();
     } catch (err) {
@@ -1734,13 +1878,13 @@ function OrderRow({ order, onAction }: { order: Order; onAction: () => void }) {
   const handleRefund = async () => {
     if (
       !window.confirm(
-        `Refund $${order.amount.toFixed(2)} for order #${order.id}? This calls Razorpay immediately.`,
+        `Refund ₹${order.amount.toFixed(2)} for order #${order.id}? This calls Razorpay immediately.`,
       )
     )
       return;
     setRefunding(true);
     try {
-      const res = await refundOrder(order.id);
+      const res = await refundOrder(order.id, order.workspace_id ?? 'default');
       toast({ title: 'Refund processed', description: `Razorpay refund ${res.refundId}.` });
       onAction();
     } catch (err) {
@@ -1758,8 +1902,13 @@ function OrderRow({ order, onAction }: { order: Order; onAction: () => void }) {
     order.status === 'paid' || order.status === 'disputed' || order.status === 'shipped';
 
   return (
-    <div
-      className="flex flex-col gap-4 rounded-xl border border-foreground/10 bg-card p-4 sm:flex-row sm:items-center sm:justify-between sm:px-5"
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        'flex w-full flex-col gap-4 rounded-xl border border-foreground/10 bg-card p-4 text-left sm:flex-row sm:items-center sm:justify-between sm:px-5',
+        onSelect && 'hover:border-[var(--commerce-signal)]/50 hover:bg-muted/30',
+      )}
       data-testid={`order-row-${order.id}`}
     >
       <div className="flex items-center gap-3">
@@ -1791,9 +1940,12 @@ function OrderRow({ order, onAction }: { order: Order; onAction: () => void }) {
         </Pill>
         {showFlag && (
           <button
-            onClick={handleDispute}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDispute();
+            }}
             disabled={disputing}
-            className="rounded-md border border-amber-500/40 px-2.5 py-1.5 font-mono-ui text-[10px] text-amber-700 hover:bg-amber-500/10 disabled:opacity-50 dark:text-amber-300"
+            className="rounded-md border border-warning/40 px-2.5 py-1.5 font-mono-ui text-[10px] text-warning hover:bg-warning/10 disabled:opacity-50"
             data-testid={`button-flag-order-${order.id}`}
           >
             {disputing ? 'Flagging…' : 'Flag'}
@@ -1801,21 +1953,25 @@ function OrderRow({ order, onAction }: { order: Order; onAction: () => void }) {
         )}
         {showRefund && (
           <button
-            onClick={handleRefund}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRefund();
+            }}
             disabled={refunding}
-            className="rounded-md border border-rose-500/40 px-2.5 py-1.5 font-mono-ui text-[10px] text-rose-700 hover:bg-rose-500/10 disabled:opacity-50 dark:text-rose-300"
+            className="rounded-md border border-critical/40 px-2.5 py-1.5 font-mono-ui text-[10px] text-critical hover:bg-critical/10 disabled:opacity-50"
             data-testid={`button-refund-order-${order.id}`}
           >
             {refunding ? 'Refunding…' : 'Refund'}
           </button>
         )}
       </div>
-    </div>
+    </button>
   );
 }
 
 function Orders() {
-  const [status, setStatus] = useState('All');
+  const [status, setStatus] = useState('all');
+  const [openOrderId, setOpenOrderId] = useState<number | null>(null);
   const queryClient = useQueryClient();
 
   const {
@@ -1829,25 +1985,25 @@ function Orders() {
     staleTime: 10_000,
   });
 
-  const filtered = orders.filter((o) => status === 'All' || o.status === status);
+  const filtered = orders.filter((o) => status === 'all' || o.status === status);
 
   return (
     <div className="space-y-6">
       <PageHeading
         eyebrow="Merchant / orders"
         title="Orders with context."
-        description="Every order carries the intent, policy, and settlement state that made it happen."
+        description="Every order carries the intent, policy, and settlement state that made it happen. Click a row for the full picture."
       />
 
       <div className="flex gap-1 overflow-auto border-b border-foreground/10">
-        {['All', 'pending', 'paid', 'shipped', 'disputed', 'refunded', 'declined'].map((s) => (
+        {['all', 'pending', 'pending_human_review', 'paid', 'shipped', 'disputed', 'refunded', 'declined'].map((s) => (
           <button
             key={s}
             onClick={() => setStatus(s)}
             className={cn(
               'whitespace-nowrap border-b-2 px-3 pb-3 font-mono-ui text-[10px] uppercase tracking-[.1em]',
               status === s
-                ? 'border-[hsl(var(--accent))] text-foreground'
+                ? 'border-[var(--commerce-signal)] text-foreground'
                 : 'border-transparent text-muted-foreground',
             )}
             data-testid={`button-orders-filter-${s.toLowerCase()}`}
@@ -1897,36 +2053,451 @@ function Orders() {
                 queryClient.invalidateQueries({ queryKey: ['orders'] });
                 queryClient.invalidateQueries({ queryKey: ['audit'] });
               }}
+              onSelect={() => setOpenOrderId(order.id)}
             />
           ))}
         </div>
       )}
+      <MerchantOrderDetailDrawer
+        orderId={openOrderId}
+        onClose={() => setOpenOrderId(null)}
+        onAction={() => {
+          queryClient.invalidateQueries({ queryKey: ['orders'] });
+          queryClient.invalidateQueries({ queryKey: ['audit'] });
+        }}
+      />
     </div>
   );
 }
+
+function MerchantOrderDetailDrawer({
+  orderId,
+  onClose,
+  onAction,
+}: {
+  orderId: number | null;
+  onClose: () => void;
+  onAction: () => void;
+}) {
+  const { toast } = useToast();
+  const [action, setAction] = useState<'dispute' | 'refund' | null>(null);
+  const [reason, setReason] = useState('');
+
+  const { data, isLoading, error } = useQuery<{
+    order: Order & { policy_decision?: CheckoutStartPolicy | null };
+  }>({
+    queryKey: ['order', orderId],
+    queryFn: async () => {
+      // fetchOrder returns plain Order; we attach the structured policy if
+      // the server included it in the future. For now we just return the row.
+      const order = await fetchOrder(orderId!);
+      return { order };
+    },
+    enabled: orderId != null,
+  });
+
+  const order = data?.order;
+
+  const submitDispute = async () => {
+    if (!order) return;
+    if (!reason.trim()) {
+      toast({ variant: 'destructive', title: 'Reason required', description: 'Tell the buyer why.' });
+      return;
+    }
+    setAction('dispute');
+    try {
+      await disputeOrder(
+        order.id,
+        reason.trim().slice(0, 500),
+        order.workspace_id ?? 'default',
+      );
+      toast({ title: 'Dispute opened', description: `Order #${order.id} flagged.` });
+      setReason('');
+      onAction();
+      onClose();
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Try again.';
+      toast({ variant: 'destructive', title: "Couldn't dispute", description: message });
+    } finally {
+      setAction(null);
+    }
+  };
+
+  const submitRefund = async () => {
+    if (!order) return;
+    setAction('refund');
+    try {
+      const res = await refundOrder(order.id, order.workspace_id ?? 'default');
+      toast({ title: 'Refund processed', description: `Razorpay refund ${res.refundId}.` });
+      onAction();
+      onClose();
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Try again.';
+      toast({ variant: 'destructive', title: "Couldn't refund", description: message });
+    } finally {
+      setAction(null);
+    }
+  };
+
+  return (
+    <AnimatePresence>
+      {orderId != null && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex bg-black/40"
+          onClick={onClose}
+          data-testid="merchant-order-drawer-backdrop"
+        >
+          <motion.div
+            initial={{ x: 40, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 40, opacity: 0 }}
+            transition={{ type: 'tween', duration: 0.2 }}
+            className="ml-auto h-full w-full max-w-[640px] overflow-y-auto bg-background p-6"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="merchant-order-drawer"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                  order
+                </p>
+                <h2 className="mt-1 font-display text-xl font-bold">
+                  ord_{String(orderId).padStart(4, '0')}
+                </h2>
+              </div>
+              <button
+                onClick={onClose}
+                className="grid h-9 w-9 place-items-center rounded-lg border border-foreground/15 hover:bg-foreground/[.05]"
+                data-testid="button-close-order-drawer"
+                aria-label="Close"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            {isLoading && (
+              <div className="grid place-items-center py-16">
+                <Loader2 size={22} className="animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {error && (
+              <div className="mt-6 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-xs text-destructive">
+                Could not load order: {(error as Error).message}
+              </div>
+            )}
+            {order && (
+              <div className="mt-6 space-y-5">
+                <div className="rounded-xl border border-foreground/10 bg-card p-4">
+                  <p className="text-sm font-semibold">
+                    {order.product_name ?? `Product #${order.product_id}`}
+                  </p>
+                  <p className="mt-1 font-mono-ui text-[10px] text-muted-foreground">
+                    buyer agent {order.buyer_agent_id} · workspace{' '}
+                    {order.workspace_id ?? '—'}
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
+                    <Pill signal={order.status === 'paid' || order.status === 'refunded'}>
+                      {order.status}
+                    </Pill>
+                    <span className="font-mono-ui text-[11px]">
+                      ₹{Number(order.amount).toFixed(2)}
+                    </span>
+                    <span className="font-mono-ui text-[10px] text-muted-foreground">
+                      {new Date(order.created_at).toLocaleString()}
+                    </span>
+                  </div>
+                </div>
+                {(order as { policy_decision?: CheckoutStartPolicy | null }).policy_decision && (
+                  <PolicyDecisionCard
+                    policy={
+                      (order as { policy_decision?: CheckoutStartPolicy | null })
+                        .policy_decision ?? null
+                    }
+                    transactionId={order.transaction_id}
+                  />
+                )}
+                {(order.razorpay_payment_id ||
+                  order.razorpay_refund_id ||
+                  order.transaction_id) && (
+                  <div className="rounded-xl border border-foreground/10 bg-card p-4">
+                    <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                      settlement
+                    </p>
+                    <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono-ui text-[10px]">
+                      <dt className="text-muted-foreground">transaction</dt>
+                      <dd>{order.transaction_id ?? '—'}</dd>
+                      <dt className="text-muted-foreground">razorpay payment</dt>
+                      <dd>{order.razorpay_payment_id ?? '—'}</dd>
+                      <dt className="text-muted-foreground">razorpay refund</dt>
+                      <dd>{order.razorpay_refund_id ?? '—'}</dd>
+                      {order.razorpay_refund_amount != null && (
+                        <>
+                          <dt className="text-muted-foreground">refund amount</dt>
+                          <dd>₹{Number(order.razorpay_refund_amount).toFixed(2)}</dd>
+                        </>
+                      )}
+                      <dt className="text-muted-foreground">human approved</dt>
+                      <dd>
+                        {order.human_approved_at
+                          ? new Date(order.human_approved_at).toLocaleString()
+                          : '—'}
+                      </dd>
+                    </dl>
+                    {order.transaction_id && (
+                      <button
+                        onClick={() => {
+                          setOpenTransaction(order.transaction_id ?? null);
+                        }}
+                        className="mt-3 inline-flex items-center gap-2 rounded-lg border border-foreground/20 px-3 py-1.5 font-mono-ui text-[10px] hover:bg-foreground/[.06]"
+                        data-testid="button-order-open-transaction"
+                      >
+                        <FileSearch size={12} /> Open full transaction
+                      </button>
+                    )}
+                  </div>
+                )}
+                {order.dispute_reason && (
+                  <div className="rounded-xl border border-warning/40 bg-warning/5 p-4">
+                    <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-warning">
+                      dispute reason
+                    </p>
+                    <p className="mt-2 text-xs">{order.dispute_reason}</p>
+                  </div>
+                )}
+                {(order.status === 'paid' || order.status === 'shipped') && (
+                  <div className="rounded-xl border border-foreground/10 bg-card p-4">
+                    <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                      actions
+                    </p>
+                    <div className="mt-3 space-y-3">
+                      <div>
+                        <label className="text-xs font-semibold">
+                          Flag this order
+                        </label>
+                        <textarea
+                          value={reason}
+                          onChange={(e) => setReason(e.target.value)}
+                          rows={2}
+                          placeholder="Short reason (max 500 chars)"
+                          className="mt-1 w-full rounded-lg border border-input bg-background p-2 text-xs"
+                          data-testid="input-order-dispute-reason"
+                        />
+                        <button
+                          onClick={submitDispute}
+                          disabled={action === 'dispute'}
+                          className="mt-2 rounded-md border border-warning/40 px-3 py-1.5 font-mono-ui text-[10px] text-warning hover:bg-warning/10 disabled:opacity-50"
+                          data-testid="button-order-flag"
+                        >
+                          {action === 'dispute' ? 'Flagging…' : 'Flag order'}
+                        </button>
+                      </div>
+                      <button
+                        onClick={submitRefund}
+                        disabled={action === 'refund'}
+                        className="rounded-md border border-critical/40 px-3 py-1.5 font-mono-ui text-[10px] text-critical hover:bg-critical/10 disabled:opacity-50"
+                        data-testid="button-order-refund"
+                      >
+                        {action === 'refund' ? 'Refunding…' : 'Refund via Razorpay'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+function AuditRow({
+  row,
+  outcomeColor,
+}: {
+  row: AuditRowShape;
+  outcomeColor: (o: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const canExpand =
+    !!row.policy ||
+    !!row.transaction_id ||
+    row.outcome === 'auto_approved' ||
+    row.outcome === 'human_approval_required';
+  return (
+    <div
+      className="border-b border-foreground/10 last:border-0"
+      data-testid="audit-row"
+    >
+      <button
+        onClick={() => canExpand && setOpen((v) => !v)}
+        disabled={!canExpand}
+        className={cn(
+          'grid w-full grid-cols-[140px_140px_1fr_180px] items-center gap-2 px-5 py-4 text-left',
+          canExpand && 'hover:bg-foreground/[.03]',
+        )}
+        data-testid="button-audit-row-toggle"
+      >
+        <span className="font-mono-ui text-[10px] text-muted-foreground">
+          {new Date(row.timestamp).toLocaleTimeString()} UTC
+        </span>
+        <Pill>{row.action}</Pill>
+        <div className="min-w-0">
+          <p className="truncate font-mono-ui text-[11px]">{row.detail ?? row.action}</p>
+          {row.transaction_id && (
+            <p className="mt-0.5 truncate font-mono-ui text-[10px] text-muted-foreground">
+              txn {row.transaction_id}
+            </p>
+          )}
+        </div>
+        <span
+          className={cn(
+            'flex items-center gap-2 font-mono-ui text-[10px]',
+            outcomeColor(row.outcome),
+          )}
+        >
+          {row.outcome}
+          {row.amount != null ? ` · ₹${Number(row.amount).toFixed(2)}` : ''}
+          {canExpand && (
+            <ChevronDown
+              size={12}
+              className={cn('transition-transform', open && 'rotate-180')}
+            />
+          )}
+        </span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden bg-muted/30"
+          >
+            <div className="grid gap-4 px-5 py-5 md:grid-cols-[1.2fr_.8fr]">
+              {row.policy ? (
+                <PolicyDecisionCard
+                  policy={row.policy}
+                  amount={row.amount ?? undefined}
+                  transactionId={row.transaction_id}
+                />
+              ) : (
+                <div className="rounded-xl border border-foreground/10 bg-background/40 p-4 text-xs text-muted-foreground">
+                  No structured policy payload for this event.
+                </div>
+              )}
+              <div className="space-y-3">
+                <div>
+                  <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                    metadata
+                  </p>
+                  <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono-ui text-[10px]">
+                    <dt className="text-muted-foreground">actor</dt>
+                    <dd>{row.actor}</dd>
+                    <dt className="text-muted-foreground">action</dt>
+                    <dd>{row.action}</dd>
+                    <dt className="text-muted-foreground">outcome</dt>
+                    <dd>{row.outcome}</dd>
+                    <dt className="text-muted-foreground">txn</dt>
+                    <dd>{row.transaction_id ?? '—'}</dd>
+                    <dt className="text-muted-foreground">workspace</dt>
+                    <dd>{row.workspace_id ?? '—'}</dd>
+                    <dt className="text-muted-foreground">amount</dt>
+                    <dd>
+                      {row.amount != null
+                        ? `₹${Number(row.amount).toFixed(2)}`
+                        : '—'}
+                    </dd>
+                  </dl>
+                </div>
+                {row.transaction_id ? (
+                  <button
+                    onClick={() => setOpenTransaction(row.transaction_id ?? null)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-foreground/20 px-3 py-1.5 font-mono-ui text-[10px] hover:bg-foreground/[.06]"
+                    data-testid="button-audit-open-transaction"
+                  >
+                    <FileSearch size={12} /> Open transaction
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+type AuditRowShape = AuditRow;
 
 function ActivityPage({ audit = false }: { audit?: boolean }) {
   const { toast } = useToast();
   const [actionFilter, setActionFilter] = useState('');
   const [outcomeFilter, setOutcomeFilter] = useState('');
+  const [txnFilter, setTxnFilter] = useState('');
+  const [fromDate, setFromDate] = useState('');
+  const [toDate, setToDate] = useState('');
   const [showFilters, setShowFilters] = useState(false);
+  const [protocolOnly, setProtocolOnly] = useState(false);
 
   const { data, isLoading, error } = useQuery<AuditResponse>({
-    queryKey: ['audit', actionFilter, outcomeFilter],
+    queryKey: ['audit', actionFilter, outcomeFilter, txnFilter, fromDate, toDate, protocolOnly],
     queryFn: () =>
       fetchAudit({
         action: actionFilter || undefined,
         outcome: outcomeFilter || undefined,
+        transactionId: txnFilter.trim() || undefined,
+        from: fromDate ? new Date(fromDate).toISOString() : undefined,
+        to: toDate ? new Date(`${toDate}T23:59:59`).toISOString() : undefined,
         limit: audit ? 100 : 50,
       }),
     refetchInterval: audit ? 5000 : 3000,
   });
 
-  const rows = data?.rows ?? [];
-  const recentCount = rows.filter((r) => {
+  const allRows = data?.rows ?? [];
+  // Protocol-only filter applies to the activity stream, not the audit log.
+  const protocolActions = new Set([
+    'a2a_request',
+    'a2a_response',
+    'acp_request',
+    'acp_response',
+    'dependency_failure',
+    'dependency_recovery',
+    'razorpay_webhook',
+  ]);
+  const rows = !audit && protocolOnly ? allRows.filter((r) => protocolActions.has(r.action)) : allRows;
+  const recentCount = allRows.filter((r) => {
     const ts = new Date(r.timestamp).getTime();
     return Date.now() - ts < 5 * 60_000;
   }).length;
+
+  const clearAll = () => {
+    setActionFilter('');
+    setOutcomeFilter('');
+    setTxnFilter('');
+    setFromDate('');
+    setToDate('');
+  };
+  const hasFilters = !!(
+    actionFilter ||
+    outcomeFilter ||
+    txnFilter.trim() ||
+    fromDate ||
+    toDate
+  );
+
+  const setRange = (kind: '24h' | '7d' | '30d') => {
+    const now = new Date();
+    const from = new Date(now);
+    if (kind === '24h') from.setHours(now.getHours() - 24);
+    if (kind === '7d') from.setDate(now.getDate() - 7);
+    if (kind === '30d') from.setDate(now.getDate() - 30);
+    setFromDate(from.toISOString().slice(0, 10));
+    setToDate(now.toISOString().slice(0, 10));
+  };
 
   const handleExport = async () => {
     try {
@@ -1958,9 +2529,9 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
 
   const outcomeColor = (o: string) => {
     if (o === 'success' || o === 'auto_approved' || o === 'approved' || o === 'recovered')
-      return 'text-emerald-600 dark:text-emerald-400';
+      return 'text-positive';
     if (o === 'failed' || o === 'degraded' || o === 'human_approval_required')
-      return 'text-amber-600 dark:text-amber-400';
+      return 'text-warning';
     return 'text-muted-foreground';
   };
 
@@ -2000,22 +2571,37 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
               <Filter size={14} />
               {actionFilter ? `action: ${actionFilter}` : 'all actions'}
               {outcomeFilter ? ` · outcome: ${outcomeFilter}` : ''}
-              {!actionFilter && !outcomeFilter ? 'Last 7 days · all events' : ''}
+              {txnFilter.trim() ? ` · txn: ${txnFilter.trim()}` : ''}
+              {fromDate ? ` · from ${fromDate}` : ''}
+              {toDate ? ` · to ${toDate}` : ''}
+              {!hasFilters ? 'Last 7 days · all events' : ''}
             </div>
-            <button
-              onClick={() => setShowFilters((v) => !v)}
-              className="text-muted-foreground hover:text-foreground"
-              data-testid="button-audit-filter"
-            >
-              <SlidersHorizontal size={16} />
-            </button>
+            <div className="flex items-center gap-2">
+              {hasFilters && (
+                <button
+                  onClick={clearAll}
+                  className="font-mono-ui text-[10px] text-muted-foreground underline"
+                  data-testid="button-audit-clear"
+                >
+                  Clear
+                </button>
+              )}
+              <button
+                onClick={() => setShowFilters((v) => !v)}
+                className="text-muted-foreground hover:text-foreground"
+                data-testid="button-audit-filter"
+              >
+                <SlidersHorizontal size={16} />
+              </button>
+            </div>
           </div>
           {showFilters && (
-            <div className="flex items-center gap-3 border-b border-foreground/10 bg-muted/30 px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3 border-b border-foreground/10 bg-muted/30 px-4 py-3">
               <select
                 value={actionFilter}
                 onChange={(e) => setActionFilter(e.target.value)}
                 className="h-8 rounded-lg border border-foreground/15 bg-background px-3 text-xs"
+                data-testid="select-audit-action"
               >
                 <option value="">All actions</option>
                 <option value="policy_check">Policy check</option>
@@ -2029,6 +2615,7 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
                 value={outcomeFilter}
                 onChange={(e) => setOutcomeFilter(e.target.value)}
                 className="h-8 rounded-lg border border-foreground/15 bg-background px-3 text-xs"
+                data-testid="select-audit-outcome"
               >
                 <option value="">All outcomes</option>
                 <option value="auto_approved">Auto approved</option>
@@ -2039,17 +2626,46 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
                 <option value="degraded">Degraded</option>
                 <option value="recovered">Recovered</option>
               </select>
-              {(actionFilter || outcomeFilter) && (
-                <button
-                  onClick={() => {
-                    setActionFilter('');
-                    setOutcomeFilter('');
-                  }}
-                  className="text-xs text-muted-foreground underline"
-                >
-                  Clear
-                </button>
-              )}
+              <input
+                type="text"
+                value={txnFilter}
+                onChange={(e) => setTxnFilter(e.target.value)}
+                placeholder="TXN-…"
+                className="h-8 w-[160px] rounded-lg border border-foreground/15 bg-background px-3 font-mono-ui text-[11px]"
+                data-testid="input-audit-txn"
+              />
+              <label className="flex items-center gap-1.5 font-mono-ui text-[10px] text-muted-foreground">
+                from
+                <input
+                  type="date"
+                  value={fromDate}
+                  onChange={(e) => setFromDate(e.target.value)}
+                  className="h-8 rounded-lg border border-foreground/15 bg-background px-2 text-xs"
+                  data-testid="input-audit-from"
+                />
+              </label>
+              <label className="flex items-center gap-1.5 font-mono-ui text-[10px] text-muted-foreground">
+                to
+                <input
+                  type="date"
+                  value={toDate}
+                  onChange={(e) => setToDate(e.target.value)}
+                  className="h-8 rounded-lg border border-foreground/15 bg-background px-2 text-xs"
+                  data-testid="input-audit-to"
+                />
+              </label>
+              <div className="flex items-center gap-1">
+                {(['24h', '7d', '30d'] as const).map((k) => (
+                  <button
+                    key={k}
+                    onClick={() => setRange(k)}
+                    className="rounded-full border border-foreground/15 px-2.5 py-1 font-mono-ui text-[10px] hover:bg-foreground/[.06]"
+                    data-testid={`button-audit-range-${k}`}
+                  >
+                    {k === '24h' ? 'Last 24h' : k === '7d' ? 'Last 7d' : 'Last 30d'}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
           {isLoading && (
@@ -2057,30 +2673,26 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
               <Loader2 size={20} className="animate-spin text-muted-foreground" />
             </div>
           )}
-          {!isLoading && rows.length === 0 && (
+          {!isLoading && error && (
+            <div className="grid place-items-center py-16 text-center">
+              <p className="text-sm text-destructive">
+                Couldn't load audit log: {(error as Error).message}
+              </p>
+            </div>
+          )}
+          {!isLoading && !error && rows.length === 0 && (
             <div className="grid place-items-center py-16 text-center">
               <FileText size={22} className="text-muted-foreground" />
               <p className="mt-3 text-sm text-muted-foreground">
-                No audit entries yet. Run a buyer query to generate events.
+                {hasFilters
+                  ? 'No audit entries match these filters. Try widening the date range or clearing filters.'
+                  : 'No audit entries yet. Run a buyer query to generate events.'}
               </p>
             </div>
           )}
           {!isLoading &&
             rows.map((row) => (
-              <div
-                key={row.id}
-                className="grid gap-2 border-b border-foreground/10 px-5 py-4 last:border-0 md:grid-cols-[140px_140px_1fr_140px] md:items-center"
-              >
-                <span className="font-mono-ui text-[10px] text-muted-foreground">
-                  {new Date(row.timestamp).toLocaleTimeString()} UTC
-                </span>
-                <Pill>{row.action}</Pill>
-                <span className="font-mono-ui text-[11px]">{row.detail ?? row.action}</span>
-                <span className={cn('font-mono-ui text-[10px]', outcomeColor(row.outcome))}>
-                  {row.outcome}
-                  {row.amount != null ? ` · $${Number(row.amount).toFixed(2)}` : ''}
-                </span>
-              </div>
+              <AuditRow key={row.id} row={row} outcomeColor={outcomeColor} />
             ))}
         </div>
       ) : (
@@ -2091,9 +2703,23 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
                 <span className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
                   event stream
                 </span>
-                <span className="font-mono-ui text-[10px] text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
-                  {recentCount} events / 5 min
-                </span>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => setProtocolOnly((v) => !v)}
+                    className={cn(
+                      'rounded-full border px-2.5 py-1 font-mono-ui text-[10px]',
+                      protocolOnly
+                        ? 'border-[var(--commerce-signal)] bg-[var(--commerce-signal)]/10 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]'
+                        : 'border-foreground/15 text-muted-foreground hover:bg-foreground/[.06]',
+                    )}
+                    data-testid="button-protocol-only"
+                  >
+                    {protocolOnly ? 'Protocol only' : 'All events'}
+                  </button>
+                  <span className="font-mono-ui text-[10px] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+                    {recentCount} events / 5 min
+                  </span>
+                </div>
               </div>
               <div className="mt-3">
                 {isLoading && (
@@ -2122,28 +2748,28 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
                   ))}
               </div>
             </div>
-            <div className="rounded-xl bg-[#1b2225] p-5 text-[#ece7d9]">
-              <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-white/50">
+            <div className="rounded-xl bg-[var(--commerce-surface-sunken)] p-5 text-[var(--commerce-ink)]">
+              <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-[var(--commerce-text-muted)]">
                 <Terminal size={14} /> latest trace
               </div>
               <div className="mt-7 space-y-4 font-mono-ui text-[11px] leading-5">
                 {rows.length === 0 ? (
-                  <p className="text-white/40">No trace data yet.</p>
+                  <p className="text-[var(--commerce-text-muted)]/60">No trace data yet.</p>
                 ) : (
                   rows.slice(0, 5).map((row) => (
                     <div key={row.id}>
                       <p>
-                        <span className="text-[#e9ff70]">
+                        <span className="text-[var(--commerce-signal-strong)]">
                           {new Date(row.timestamp).toLocaleTimeString()}
                         </span>{' '}
                         {row.action}
                       </p>
-                      {row.detail && <p className="pl-4 text-white/60">{row.detail}</p>}
+                      {row.detail && <p className="pl-4 text-[var(--commerce-text-muted)]/70">{row.detail}</p>}
                     </div>
                   ))
                 )}
                 {rows.length > 0 && (
-                  <div className="mt-6 border-t border-white/10 pt-4 text-[#e9ff70]">
+                  <div className="mt-6 border-t border-[var(--commerce-border)] pt-4 text-[var(--commerce-signal-strong)]">
                     stream active · {rows.length} total events
                   </div>
                 )}
@@ -2152,6 +2778,403 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── Reusable: PolicyDecisionCard ────────────────────────────────────────────
+
+function PolicyDecisionCard({
+  policy,
+  amount,
+  transactionId,
+  compact = false,
+}: {
+  policy: CheckoutStartPolicy | null | undefined;
+  amount?: number;
+  transactionId?: string | null;
+  compact?: boolean;
+}) {
+  if (!policy) {
+    return (
+      <div className="rounded-xl border border-foreground/10 bg-muted/40 p-4 text-xs text-muted-foreground">
+        Policy not recorded for this event.
+      </div>
+    );
+  }
+  const fmt = (n: number) => `₹${n.toFixed(2)}`;
+  const buyerOk = policy.buyer.limit != null && !policy.buyer.exceeded;
+  const merchantOk = !policy.merchant.exceeded;
+  return (
+    <div
+      className={cn('rounded-xl border border-foreground/10 bg-card p-4 sm:p-5', compact && 'p-3')}
+      data-testid="policy-decision-card"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+          <ShieldCheck size={14} /> authorization decision
+        </div>
+        {transactionId && (
+          <span className="font-mono-ui text-[9px] uppercase tracking-[.1em] text-muted-foreground">
+            {transactionId}
+          </span>
+        )}
+      </div>
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="rounded-lg border border-foreground/10 bg-background/50 p-3">
+          <p className="font-mono-ui text-[9px] uppercase tracking-[.1em] text-muted-foreground">
+            amount
+          </p>
+          <p className="mt-1 text-base font-semibold">{fmt(policy.amount ?? amount ?? 0)}</p>
+        </div>
+        <div className="rounded-lg border border-foreground/10 bg-background/50 p-3">
+          <p className="font-mono-ui text-[9px] uppercase tracking-[.1em] text-muted-foreground">
+            result
+          </p>
+          <p
+            className={cn(
+              'mt-1 text-sm font-semibold',
+              policy.decision === 'auto_approved'
+                ? 'text-positive'
+                : policy.decision === 'human_approval_required'
+                  ? 'text-warning'
+                  : 'text-muted-foreground',
+            )}
+          >
+            {policy.decision === 'auto_approved'
+              ? 'Auto approved'
+              : policy.decision === 'human_approval_required'
+                ? 'Human approval required'
+                : 'No match'}
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-2">
+        <div className="rounded-lg border border-foreground/10 bg-background/50 p-3">
+          <p className="font-mono-ui text-[9px] uppercase tracking-[.1em] text-muted-foreground">
+            buyer ceiling
+          </p>
+          <p className="mt-1 text-sm">
+            {policy.buyer.limit != null ? fmt(policy.buyer.limit) : 'No buyer limit set'}
+            <span
+              className={cn(
+                'ml-2 font-mono-ui text-[10px]',
+                policy.buyer.exceeded
+                  ? 'text-warning'
+                  : 'text-positive',
+              )}
+            >
+              {policy.buyer.exceeded ? '✗ exceeded' : '✓ passed'}
+            </span>
+          </p>
+        </div>
+        <div className="rounded-lg border border-foreground/10 bg-background/50 p-3">
+          <p className="font-mono-ui text-[9px] uppercase tracking-[.1em] text-muted-foreground">
+            merchant ceiling
+          </p>
+          <p className="mt-1 text-sm">
+            {fmt(policy.merchant.limit)}
+            <span
+              className={cn(
+                'ml-2 font-mono-ui text-[10px]',
+                policy.merchant.exceeded
+                  ? 'text-warning'
+                  : 'text-positive',
+              )}
+            >
+              {policy.merchant.exceeded ? '✗ exceeded' : '✓ passed'}
+            </span>
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 rounded-lg border border-foreground/10 bg-background/50 p-3">
+        <p className="font-mono-ui text-[9px] uppercase tracking-[.1em] text-muted-foreground">
+          triggered by
+        </p>
+        <p className="mt-1 text-sm font-semibold">
+          {policy.ceilingSource === 'both'
+            ? 'Both ceilings'
+            : policy.ceilingSource === 'merchant_ceiling'
+              ? 'Merchant ceiling'
+              : policy.ceilingSource === 'buyer_ceiling'
+                ? 'Buyer ceiling'
+                : 'None — within policy'}
+        </p>
+        {policy.reasons.length > 0 && (
+          <ul className="mt-2 space-y-1 text-xs text-muted-foreground">
+            {policy.reasons.map((r, i) => (
+              <li key={i}>· {r}</li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Reusable: TransactionDetailDrawer ───────────────────────────────────────
+
+// Module-level drawer bus; setOpenTransaction opens the transaction drawer from anywhere.
+let openTxn: string | null = null;
+const txnSubs = new Set<(t: string | null) => void>();
+export function setOpenTransaction(txn: string | null) {
+  openTxn = txn;
+  txnSubs.forEach((fn) => fn(txn));
+}
+function useOpenTransaction(): [string | null, (t: string | null) => void] {
+  const [txn, setTxn] = useState<string | null>(openTxn);
+  useEffect(() => {
+    txnSubs.add(setTxn);
+    if (openTxn !== txn) setTxn(openTxn);
+    return () => {
+      txnSubs.delete(setTxn);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  return [txn, setOpenTransaction];
+}
+
+function TransactionDetailDrawer({
+  txnId,
+  onClose,
+}: {
+  txnId: string | null;
+  onClose: () => void;
+}) {
+  const { data, isLoading, error } = useQuery<TransactionDetail>({
+    queryKey: ['transaction', txnId],
+    queryFn: () => fetchTransactionDetail(txnId!),
+    enabled: !!txnId,
+  });
+
+  return (
+    <AnimatePresence>
+      {txnId && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          exit={{ opacity: 0 }}
+          className="fixed inset-0 z-50 flex bg-black/40"
+          onClick={onClose}
+          data-testid="transaction-drawer-backdrop"
+        >
+          <motion.div
+            initial={{ x: 40, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 40, opacity: 0 }}
+            transition={{ type: 'tween', duration: 0.2 }}
+            className="ml-auto h-full w-full max-w-[640px] overflow-y-auto bg-background p-6"
+            onClick={(e) => e.stopPropagation()}
+            data-testid="transaction-drawer"
+          >
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                  transaction
+                </p>
+                <h2 className="mt-1 font-display text-xl font-bold">{txnId}</h2>
+              </div>
+              <button
+                onClick={onClose}
+                className="grid h-9 w-9 place-items-center rounded-lg border border-foreground/15 hover:bg-foreground/[.05]"
+                data-testid="button-close-transaction-drawer"
+                aria-label="Close"
+              >
+                <X size={15} />
+              </button>
+            </div>
+            {isLoading && (
+              <div className="grid place-items-center py-16">
+                <Loader2 size={22} className="animate-spin text-muted-foreground" />
+              </div>
+            )}
+            {error && (
+              <div className="mt-6 rounded-xl border border-destructive/40 bg-destructive/5 p-4 text-xs text-destructive">
+                Could not load transaction: {(error as Error).message}
+              </div>
+            )}
+            {data && (
+              <div className="mt-6 space-y-5">
+                <div>
+                  <h3 className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                    orders
+                  </h3>
+                  {data.orders.length === 0 && (
+                    <p className="mt-2 text-sm text-muted-foreground">No order rows.</p>
+                  )}
+                  {data.orders.map((o) => (
+                    <div
+                      key={o.id}
+                      className="mt-2 rounded-lg border border-foreground/10 bg-card p-3"
+                    >
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-semibold">
+                          {o.product_name ?? `Product #${o.product_id}`}
+                        </span>
+                        <Pill
+                          signal={
+                            o.status === 'paid' || o.status === 'refunded'
+                          }
+                        >
+                          {o.status}
+                        </Pill>
+                      </div>
+                      <p className="mt-1 font-mono-ui text-[10px] text-muted-foreground">
+                        ₹{Number(o.amount).toFixed(2)} · ord_{String(o.id).padStart(4, '0')} ·{' '}
+                        workspace {o.workspace_id ?? '—'}
+                      </p>
+                      {(o as { policy_decision?: CheckoutStartPolicy | null }).policy_decision && (
+                        <div className="mt-3">
+                          <PolicyDecisionCard
+                            policy={
+                              (o as { policy_decision?: CheckoutStartPolicy | null })
+                                .policy_decision ?? null
+                            }
+                            transactionId={txnId}
+                            compact
+                          />
+                        </div>
+                      )}
+                      {(o.razorpay_payment_id || o.razorpay_refund_id) && (
+                        <div className="mt-3 grid grid-cols-1 gap-2 text-[10px] font-mono-ui sm:grid-cols-2">
+                          {o.razorpay_payment_id && (
+                            <div>
+                              <p className="text-muted-foreground">razorpay payment</p>
+                              <p>{o.razorpay_payment_id}</p>
+                            </div>
+                          )}
+                          {o.razorpay_refund_id && (
+                            <div>
+                              <p className="text-muted-foreground">razorpay refund</p>
+                              <p>{o.razorpay_refund_id}</p>
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div>
+                  <h3 className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                    audit events ({data.audit.length})
+                  </h3>
+                  <div className="mt-2 space-y-1">
+                    {data.audit.map((a) => (
+                      <div
+                        key={a.id}
+                        className="flex items-start gap-3 rounded-md border border-foreground/10 bg-card p-2.5"
+                      >
+                        <span className="w-[68px] shrink-0 font-mono-ui text-[10px] text-muted-foreground">
+                          {new Date(a.timestamp).toLocaleTimeString()}
+                        </span>
+                        <Pill>{a.action}</Pill>
+                        <div className="min-w-0 flex-1">
+                          <p className="truncate text-xs">{a.detail ?? a.action}</p>
+                          <p className="mt-0.5 font-mono-ui text-[9px] text-muted-foreground">
+                            {a.actor} · {a.outcome}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
+// ── Demo Controls section (Settings → Demo controls) ───────────────────────
+
+function DemoControlsSection() {
+  const { toast } = useToast();
+  const { data: debugStatus, refetch } = useQuery<DebugStatus>({
+    queryKey: ['debug-status'],
+    queryFn: fetchDebugStatus,
+    refetchInterval: 3000,
+  });
+  const simulating = debugStatus?.simulateSupplierFailure ?? false;
+  const toggleMutation = useMutation({
+    mutationFn: (enabled: boolean) => toggleDebugFailure(enabled),
+    onSuccess: (status) => {
+      toast({
+        title: status.simulateSupplierFailure
+          ? 'Supplier outage enabled'
+          : 'Supplier outage disabled',
+        description: status.simulateSupplierFailure
+          ? 'Next buyer query will treat the supplier as unreachable.'
+          : 'Supplier is healthy again.',
+      });
+      refetch();
+    },
+    onError: (err) => {
+      const message =
+        err instanceof ApiError ? err.message : "Couldn't update debug mode. Try again.";
+      toast({
+        variant: 'destructive',
+        title: "Couldn't update debug mode",
+        description: message,
+      });
+    },
+  });
+
+  return (
+    <div className="rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
+      <div className="flex items-start gap-4">
+        <Radio size={20} className="mt-1 text-[var(--commerce-signal)]" />
+        <div className="flex-1">
+          <h3 className="font-display text-xl font-bold">Demo controls</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Force the supplier agent to fail so you can demonstrate the retry + fallback + recovery
+            trace. Real backend toggle — no mock state.
+          </p>
+          <div className="mt-7 space-y-5">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground/10 pb-4">
+              <div>
+                <p className="text-sm">Supplier outage</p>
+                <p className="mt-0.5 font-mono-ui text-[10px] text-muted-foreground">
+                  When enabled, the next buyer query will see the supplier as unreachable and fall
+                  back to the cached catalog.
+                </p>
+              </div>
+              <div className="flex items-center gap-2">
+                <span
+                  className={cn(
+                    'flex items-center gap-2 rounded-full border px-3 py-1.5 font-mono-ui text-[10px]',
+                    simulating
+                      ? 'border-warning/40 bg-warning/10 text-warning'
+                      : 'border-positive/40 bg-positive/10 text-positive',
+                  )}
+                  data-testid="demo-controls-state"
+                >
+                  <span
+                    className={cn(
+                      'h-1.5 w-1.5 rounded-full',
+                      simulating ? 'bg-warning' : 'bg-positive',
+                    )}
+                  />
+                  {simulating ? 'Simulated outage' : 'Healthy'}
+                </span>
+                <button
+                  onClick={() => toggleMutation.mutate(!simulating)}
+                  disabled={toggleMutation.isPending}
+                  className="rounded-md border border-foreground/20 px-3 py-1.5 font-mono-ui text-[10px] hover:bg-foreground/[.06] disabled:opacity-50"
+                  data-testid="button-toggle-supplier-outage"
+                >
+                  {toggleMutation.isPending ? 'Saving…' : simulating ? 'Stop outage' : 'Simulate outage'}
+                </button>
+              </div>
+            </div>
+            <p className="font-mono-ui text-[10px] text-muted-foreground">
+              Other failure simulations (A2A timeout, ACP failure, payment-gateway failure) are not
+              yet implemented in the backend — they will appear here as the API exposes them.
+            </p>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2226,7 +3249,7 @@ function Settings() {
         <div className="rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
           <div className="flex items-start gap-4">
             <ShieldCheck
-              className="mt-1 text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]"
+              className="mt-1 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]"
               size={20}
             />
             <div className="flex-1">
@@ -2244,7 +3267,7 @@ function Settings() {
                       type="number"
                       value={maxCap}
                       onChange={(e) => setMaxCap(e.target.value)}
-                      className="h-8 w-24 rounded-lg border border-foreground/15 bg-background px-3 text-right font-mono-ui text-[10px] outline-none focus:border-[hsl(var(--accent))]"
+                      className="h-8 w-24 rounded-lg border border-foreground/15 bg-background px-3 text-right font-mono-ui text-[10px] outline-none focus:border-[var(--commerce-signal)]"
                       min="0"
                       step="10"
                       data-testid="input-settings-max-auto-approve"
@@ -2259,7 +3282,7 @@ function Settings() {
                     className={cn(
                       'flex items-center gap-2 rounded-full border px-3 py-1.5 font-mono-ui text-[10px]',
                       requireHuman
-                        ? 'border-[hsl(var(--accent)/.4)] bg-[hsl(var(--accent)/.1)]'
+                        ? 'border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10'
                         : 'border-foreground/15 text-muted-foreground',
                     )}
                     data-testid="button-setting-require-human"
@@ -2267,7 +3290,7 @@ function Settings() {
                     <span
                       className={cn(
                         'h-1.5 w-1.5 rounded-full',
-                        requireHuman ? 'bg-[hsl(var(--accent))]' : 'bg-muted-foreground',
+                        requireHuman ? 'bg-[var(--commerce-signal)]' : 'bg-muted-foreground',
                       )}
                     />
                     {requireHuman ? 'Enabled' : 'Off'}
@@ -2276,8 +3299,8 @@ function Settings() {
                 {/* Test mode — read-only */}
                 <div className="flex items-center justify-between border-b border-foreground/10 pb-4 last:border-0 last:pb-0">
                   <span className="text-sm">Test mode payments</span>
-                  <span className="flex items-center gap-2 rounded-full border border-[hsl(var(--accent)/.4)] bg-[hsl(var(--accent)/.1)] px-3 py-1.5 font-mono-ui text-[10px]">
-                    <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--accent))]" /> Enabled
+                  <span className="flex items-center gap-2 rounded-full border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-3 py-1.5 font-mono-ui text-[10px]">
+                    <span className="h-1.5 w-1.5 rounded-full bg-[var(--commerce-signal)]" /> Enabled
                   </span>
                 </div>
               </div>
@@ -2286,6 +3309,7 @@ function Settings() {
         </div>
 
         <PaymentGatewaySection />
+        <DemoControlsSection />
       </div>
     </div>
   );
@@ -2407,19 +3431,19 @@ function PaymentGatewaySection() {
     >
       <div className="flex items-start gap-4">
         <KeyRound
-          className="mt-1 text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]"
+          className="mt-1 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]"
           size={20}
         />
         <div className="flex-1">
           <div className="flex items-center justify-between">
             <h3 className="font-display text-xl font-bold">Payment gateway</h3>
             {configured ? (
-              <span className="flex items-center gap-2 rounded-full border border-[hsl(var(--accent)/.4)] bg-[hsl(var(--accent)/.1)] px-3 py-1.5 font-mono-ui text-[10px] text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
-                <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--accent))]" /> connected
+              <span className="flex items-center gap-2 rounded-full border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-3 py-1.5 font-mono-ui text-[10px] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--commerce-signal)]" /> connected
               </span>
             ) : (
-              <span className="flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/5 px-3 py-1.5 font-mono-ui text-[10px] text-amber-600 dark:text-amber-400">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" /> not configured
+              <span className="flex items-center gap-2 rounded-full border border-warning/40 bg-warning/5 px-3 py-1.5 font-mono-ui text-[10px] text-warning">
+                <span className="h-1.5 w-1.5 rounded-full bg-warning" /> not configured
               </span>
             )}
           </div>
@@ -2435,7 +3459,7 @@ function PaymentGatewaySection() {
                 value={keyId}
                 onChange={(e) => setKeyId(e.target.value)}
                 placeholder="rzp_test_…"
-                className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono-ui text-xs outline-none focus:border-[hsl(var(--accent))]"
+                className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono-ui text-xs outline-none focus:border-[var(--commerce-signal)]"
                 data-testid="input-razorpay-key-id"
               />
             </label>
@@ -2460,7 +3484,7 @@ function PaymentGatewaySection() {
                     placeholder={
                       configured ? '•••••• (enter new value to replace)' : 'Razorpay key secret'
                     }
-                    className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono-ui text-xs outline-none focus:border-[hsl(var(--accent))]"
+                    className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono-ui text-xs outline-none focus:border-[var(--commerce-signal)]"
                     data-testid="input-razorpay-key-secret"
                     autoComplete="off"
                   />
@@ -2474,7 +3498,7 @@ function PaymentGatewaySection() {
                     placeholder={
                       configured ? '•••••• (enter new value to replace)' : 'Razorpay webhook secret'
                     }
-                    className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono-ui text-xs outline-none focus:border-[hsl(var(--accent))]"
+                    className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono-ui text-xs outline-none focus:border-[var(--commerce-signal)]"
                     data-testid="input-razorpay-webhook-secret"
                     autoComplete="off"
                   />
@@ -2497,7 +3521,7 @@ function PaymentGatewaySection() {
                 className={cn(
                   'flex items-start gap-2 rounded-lg border px-4 py-3 text-xs',
                   testState === 'pass'
-                    ? 'border-emerald-500/40 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300'
+                    ? 'border-positive/40 bg-positive/5 text-positive'
                     : 'border-destructive/40 bg-destructive/5 text-destructive',
                 )}
                 data-testid="razorpay-test-result"
@@ -2670,7 +3694,312 @@ function renderUpsellSuggestions({
   );
 }
 
-function BuyerConsole({ subpage }: { subpage: string }) {
+function BuyerOrderCard({ order }: { order: Order }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+
+  const canDispute = order.status === 'paid' || order.status === 'shipped';
+
+  // Fetch the matching audit events for this order's transaction so the
+  // user can see why the agent picked it. Falls back to "no trace" if the
+  // backend hasn't recorded one.
+  const trace = useQuery<TransactionDetail>({
+    queryKey: ['transaction', order.transaction_id],
+    queryFn: () => fetchTransactionDetail(order.transaction_id ?? ''),
+    enabled: open && !!order.transaction_id,
+  });
+
+  const handleDispute = async () => {
+    if (!reason.trim()) {
+      toast({
+        variant: 'destructive',
+        title: 'Reason required',
+        description: 'Tell the agent what went wrong.',
+      });
+      return;
+    }
+    setBusy(true);
+    try {
+      await disputeOrder(
+        order.id,
+        reason.trim().slice(0, 500),
+        getOrCreateBuyerWorkspaceId(),
+      );
+      toast({ title: 'Order flagged', description: 'Dispute opened with the merchant.' });
+      setReason('');
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Try again.';
+      toast({ variant: 'destructive', title: "Couldn't flag", description: message });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div
+      className="rounded-xl border border-foreground/10 bg-card"
+      data-testid={`buyer-order-${order.id}`}
+    >
+      <button
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between p-5 text-left hover:bg-muted/30"
+        data-testid={`button-toggle-buyer-order-${order.id}`}
+      >
+        <div className="flex items-center gap-3">
+          <div className="grid h-10 w-10 place-items-center rounded-lg bg-muted">
+            <Package size={16} />
+          </div>
+          <div>
+            <p className="text-sm font-semibold">
+              {order.product_name ?? `Product #${order.product_id}`}
+            </p>
+            <p className="mt-1 font-mono-ui text-[10px] text-muted-foreground">
+              ord_{String(order.id).padStart(4, '0')} ·{' '}
+              {new Date(order.created_at).toLocaleString()} ·{' '}
+              {order.transaction_id ? `txn ${order.transaction_id}` : 'no txn yet'}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="text-right">
+            <p className="text-sm font-semibold">₹{Number(order.amount).toFixed(2)}</p>
+            <Pill signal={order.status === 'paid' || order.status === 'refunded'}>
+              {order.status}
+            </Pill>
+          </div>
+          <ChevronDown
+            size={14}
+            className={cn('transition-transform text-muted-foreground', open && 'rotate-180')}
+          />
+        </div>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.18 }}
+            className="overflow-hidden border-t border-foreground/10"
+          >
+            <div className="grid gap-5 p-5 md:grid-cols-[1.1fr_.9fr]">
+              <div>
+                <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                  why this pick
+                </p>
+                {!order.transaction_id && (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    No transaction recorded yet.
+                  </p>
+                )}
+                {order.transaction_id && trace.isLoading && (
+                  <div className="mt-3 grid place-items-center py-6">
+                    <Loader2 size={16} className="animate-spin text-muted-foreground" />
+                  </div>
+                )}
+                {order.transaction_id && trace.data && (
+                  <div className="mt-2 space-y-1">
+                    {trace.data.audit.length === 0 && (
+                      <p className="text-sm text-muted-foreground">
+                        No audit events for this transaction.
+                      </p>
+                    )}
+                    {trace.data.audit.slice(0, 10).map((a) => (
+                      <div
+                        key={a.id}
+                        className="flex items-start gap-2 rounded-md border border-foreground/10 bg-background p-2 text-xs"
+                      >
+                        <span className="w-[68px] shrink-0 font-mono-ui text-[10px] text-muted-foreground">
+                          {new Date(a.timestamp).toLocaleTimeString()}
+                        </span>
+                        <Pill>{a.action}</Pill>
+                        <p className="min-w-0 truncate text-xs">{a.detail ?? a.action}</p>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              {canDispute ? (
+                <div>
+                  <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                    flag this order
+                  </p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Pick a short reason. The merchant receives it as a dispute.
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-1">
+                    {['Wrong product', 'Payment issue', 'Duplicate charge', 'Other'].map(
+                      (label) => (
+                        <button
+                          key={label}
+                          onClick={() => setReason(label)}
+                          className={cn(
+                            'rounded-md border px-2 py-1.5 text-left text-[11px] hover:bg-muted',
+                            reason === label
+                              ? 'border-[var(--commerce-signal)] bg-[var(--commerce-signal)]/5'
+                              : 'border-foreground/15',
+                          )}
+                          data-testid={`button-buyer-dispute-reason-${label.replace(/\s+/g, '-').toLowerCase()}`}
+                        >
+                          {label}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                  <textarea
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    rows={2}
+                    maxLength={500}
+                    className="mt-2 w-full rounded-lg border border-input bg-background p-2 text-xs"
+                    placeholder="Optional detail (max 500 chars)"
+                    data-testid="input-buyer-dispute-reason"
+                  />
+                  <button
+                    onClick={handleDispute}
+                    disabled={busy}
+                    className="mt-2 rounded-md border border-warning/40 px-3 py-1.5 font-mono-ui text-[10px] text-warning hover:bg-warning/10 disabled:opacity-50"
+                    data-testid="button-buyer-dispute-submit"
+                  >
+                    {busy ? 'Flagging…' : 'Flag this order'}
+                  </button>
+                </div>
+              ) : (
+                <div className="rounded-xl border border-foreground/10 bg-background/50 p-4 text-xs text-muted-foreground">
+                  Dispute can be opened once the order is paid. Current status:{' '}
+                  <span className="font-mono-ui text-foreground">{order.status}</span>.
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function BuyerSettings() {
+  const { toast } = useToast();
+  const ws = getOrCreateBuyerWorkspaceId();
+  const { data, isLoading } = useQuery<BuyerSession>({
+    queryKey: ['buyer-session', ws],
+    queryFn: () => fetchBuyerSession(ws),
+  });
+  const [maxSpend, setMaxSpend] = useState<string>('');
+  const [autonomy, setAutonomy] = useState<BuyerSession['autonomy']>('recommend_only');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    if (data) {
+      setMaxSpend(data.maxSpend != null ? String(data.maxSpend) : '');
+      setAutonomy(data.autonomy);
+    }
+  }, [data]);
+
+  const save = async () => {
+    const parsed = maxSpend.trim() === '' ? null : Number(maxSpend);
+    if (parsed != null && (!Number.isFinite(parsed) || parsed <= 0)) {
+      toast({
+        variant: 'destructive',
+        title: 'Invalid limit',
+        description: 'Session limit must be a positive number or blank.',
+      });
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateBuyerSession({ workspaceId: ws, maxSpend: parsed, autonomy });
+      toast({ title: 'Buyer session saved', description: 'Settings applied to next query.' });
+    } catch (err) {
+      const message = err instanceof ApiError ? err.message : 'Try again.';
+      toast({ variant: 'destructive', title: "Couldn't save", description: message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <PageHeading
+        eyebrow="Buyer / settings"
+        title="Your agent's leash."
+        description="Cap the spend Northstar can commit without your approval, and decide how often it asks."
+      />
+      <div className="rounded-2xl border border-foreground/10 bg-card p-6 sm:p-7">
+        {isLoading ? (
+          <div className="grid place-items-center py-8">
+            <Loader2 size={18} className="animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <div className="space-y-5">
+            <div>
+              <label className="text-xs font-semibold">Session spend limit (₹)</label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Leave blank to disable the buyer-side cap. The merchant cap still applies.
+              </p>
+              <input
+                type="number"
+                min={0}
+                value={maxSpend}
+                onChange={(e) => setMaxSpend(e.target.value)}
+                className="mt-2 h-10 w-full max-w-[240px] rounded-lg border border-input bg-background px-3 text-sm"
+                data-testid="input-buyer-max-spend"
+              />
+            </div>
+            <div>
+              <p className="text-xs font-semibold">Autonomy</p>
+              <div className="mt-2 space-y-2">
+                {(
+                  [
+                    ['recommend_only', 'Recommend only — never purchase without asking'],
+                    ['ask_before', 'Ask before every purchase'],
+                    ['auto_up_to_limit', 'Auto-approve up to your session limit'],
+                  ] as const
+                ).map(([val, label]) => (
+                  <label
+                    key={val}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-2 rounded-lg border p-3 text-xs',
+                      autonomy === val
+                        ? 'border-[var(--commerce-signal)] bg-[var(--commerce-signal)]/5'
+                        : 'border-foreground/15',
+                    )}
+                  >
+                    <input
+                      type="radio"
+                      name="autonomy"
+                      value={val}
+                      checked={autonomy === val}
+                      onChange={() => setAutonomy(val)}
+                      className="accent-[var(--commerce-signal)]"
+                      data-testid={`radio-autonomy-${val}`}
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <button
+              onClick={save}
+              disabled={saving}
+              className="inline-flex items-center gap-2 rounded-lg bg-foreground px-4 py-2 text-sm font-semibold text-background hover:bg-foreground/90 disabled:opacity-50"
+              data-testid="button-save-buyer-session"
+            >
+              {saving ? 'Saving…' : 'Save session'}
+            </button>
+            <p className="font-mono-ui text-[10px] text-muted-foreground">
+              workspace {ws.slice(0, 12)}…
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
   const { toast } = useToast();
   const [prompt, setPrompt] = useState('');
   const [maxSpend, setMaxSpend] = useState<string>('180');
@@ -2680,6 +4009,7 @@ function BuyerConsole({ subpage }: { subpage: string }) {
   const [approved, setApproved] = useState(false);
   const [traceSteps, setTraceSteps] = useState<TraceStep[]>([]);
   const [traceResult, setTraceResult] = useState<BuyerQueryResult | null>(null);
+  const [traceEvidence, setTraceEvidence] = useState<string | undefined>(undefined);
   const [dismissedSuggestions, setDismissedSuggestions] = useState<Set<number>>(new Set());
   const [upsellState, setUpsellState] = useState<{
     busy: boolean;
@@ -2688,17 +4018,26 @@ function BuyerConsole({ subpage }: { subpage: string }) {
   }>({ busy: false, result: null, error: null });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
-  const unsubRef = useRef<(() => void) | null>(null);
   const sample = 'Find a warm, quiet desk lamp under $180 with delivery this week.';
   const isCheckout = subpage === '/buyer/checkout';
   const isTrace = subpage === '/buyer/trace';
   const isOrders = subpage === '/buyer/orders';
+  const isSettings = subpage === '/buyer/settings';
 
-  useEffect(() => {
-    return () => {
-      unsubRef.current?.();
-    };
-  }, []);
+  if (isSettings) return <BuyerSettings />;
+
+  const { data: buyerOrders, isLoading: ordersLoading } = useQuery<Order[]>({
+    queryKey: ['orders'],
+    queryFn: fetchOrders,
+    refetchInterval: 5000,
+    enabled: isOrders,
+  });
+
+  const { data: buyerSession } = useQuery<BuyerSession>({
+    queryKey: ['buyer-session', getOrCreateBuyerWorkspaceId()],
+    queryFn: () => fetchBuyerSession(getOrCreateBuyerWorkspaceId()),
+    staleTime: 30_000,
+  });
 
   const handleSubmit = async () => {
     const trimmed = prompt.trim();
@@ -2716,6 +4055,7 @@ function BuyerConsole({ subpage }: { subpage: string }) {
     setError(null);
     setTraceSteps([]);
     setTraceResult(null);
+    setTraceEvidence(undefined);
     setUpsellState({ busy: false, result: null, error: null });
     setDismissedSuggestions(new Set());
     setElapsed(null);
@@ -2727,17 +4067,8 @@ function BuyerConsole({ subpage }: { subpage: string }) {
       setSessionId(res.sessionId);
       setTraceSteps(res.steps);
       setTraceResult(res.result);
+      setTraceEvidence(res.evidence);
       setElapsed(Date.now() - start);
-      unsubRef.current?.();
-      unsubRef.current = subscribeTrace(
-        res.sessionId,
-        (step) => setTraceSteps((prev) => [...prev, step]),
-        (result) => {
-          setTraceResult(result);
-          setLoading(false);
-        },
-        () => {},
-      );
       setLoading(false);
     } catch (err) {
       console.error('Buyer query failed:', err);
@@ -2760,18 +4091,15 @@ function BuyerConsole({ subpage }: { subpage: string }) {
   const rec = traceResult?.recommendedProduct;
 
   if (isOrders) {
-    const { data: buyerOrders, isLoading: ordersLoading } = useQuery<Order[]>({
-      queryKey: ['orders'],
-      queryFn: fetchOrders,
-      refetchInterval: 5000,
-    });
-    const orderList = buyerOrders ?? [];
+    const orderList = (buyerOrders ?? []).filter(
+      (o) => o.workspace_id == null || o.workspace_id === getOrCreateBuyerWorkspaceId(),
+    );
     return (
       <div className="space-y-6">
         <PageHeading
           eyebrow="Buyer / order history"
           title="Your commitments."
-          description="Completed and test-mode purchases made by Northstar Agent."
+          description="Completed and test-mode purchases made by Northstar Agent. Open a row for the why-this-pick trace and dispute controls."
         />
         {ordersLoading && (
           <div className="grid place-items-center py-12">
@@ -2789,30 +4117,7 @@ function BuyerConsole({ subpage }: { subpage: string }) {
         {!ordersLoading && (
           <div className="space-y-3">
             {orderList.map((o) => (
-              <div
-                key={o.id}
-                className="flex items-center justify-between rounded-xl border border-foreground/10 bg-card p-5"
-                data-testid={`buyer-order-${o.id}`}
-              >
-                <div className="flex items-center gap-3">
-                  <div className="grid h-10 w-10 place-items-center rounded-lg bg-muted">
-                    <Package size={16} />
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold">
-                      {o.product_name ?? `Product #${o.product_id}`}
-                    </p>
-                    <p className="mt-1 font-mono-ui text-[10px] text-muted-foreground">
-                      ord_{String(o.id).padStart(4, '0')} ·{' '}
-                      {new Date(o.created_at).toLocaleDateString()}
-                    </p>
-                  </div>
-                </div>
-                <div className="text-right">
-                  <p className="text-sm font-semibold">${Number(o.amount).toFixed(2)}</p>
-                  <Pill signal={o.status === 'paid'}>{o.status}</Pill>
-                </div>
-              </div>
+              <BuyerOrderCard key={o.id} order={o} />
             ))}
           </div>
         )}
@@ -2853,19 +4158,26 @@ function BuyerConsole({ subpage }: { subpage: string }) {
           approved={approved}
           onApprove={() => setApproved(true)}
           sessionId={sessionId}
-          policyResult={traceResult?.policyResult ?? null}
+          policy={traceResult?.policy ?? null}
           viewer="buyer"
+          theme={theme}
         />
       )}
       {buyerSubpage === 'trace' && (
-        <Trace steps={traceSteps} result={traceResult} sessionId={sessionId} />
+        <Trace
+          steps={traceSteps}
+          result={traceResult}
+          sessionId={sessionId}
+          serverSignature={traceEvidence}
+          sessionMaxSpend={buyerSession?.maxSpend ?? null}
+        />
       )}
       {buyerSubpage === 'console' && (
         <div className="grid gap-4 xl:grid-cols-[1.05fr_.95fr]">
           <div className="flex min-h-[520px] flex-col rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
             <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foreground/10 pb-4">
               <div className="flex items-center gap-3">
-                <div className="grid h-9 w-9 place-items-center rounded-lg bg-[hsl(var(--accent))] text-[hsl(var(--accent-foreground))]">
+                <div className="grid h-9 w-9 place-items-center rounded-lg bg-[var(--commerce-signal)] text-[var(--commerce-signal-foreground)]">
                   <Bot size={18} />
                 </div>
                 <div>
@@ -2889,7 +4201,7 @@ function BuyerConsole({ subpage }: { subpage: string }) {
                 onChange={(e) => setMaxSpend(e.target.value)}
                 type="number"
                 min="1"
-                className="h-8 w-24 rounded-md border border-foreground/15 bg-background px-2 text-right font-mono-ui text-[10px] outline-none focus:border-[hsl(var(--accent))]"
+                className="h-8 w-24 rounded-md border border-foreground/15 bg-background px-2 text-right font-mono-ui text-[10px] outline-none focus:border-[var(--commerce-signal)]"
                 data-testid="input-buyer-max-spend"
               />
               <span className="text-[10px] text-muted-foreground/70">
@@ -2932,9 +4244,9 @@ function BuyerConsole({ subpage }: { subpage: string }) {
                     <motion.div
                       initial={{ opacity: 0, y: 8 }}
                       animate={{ opacity: 1, y: 0 }}
-                      className="max-w-[390px] rounded-2xl rounded-tl-sm border border-[hsl(var(--accent)/.4)] bg-[hsl(var(--accent)/.08)] px-4 py-3 text-sm leading-6"
+                      className="max-w-[390px] rounded-2xl rounded-tl-sm border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-4 py-3 text-sm leading-6"
                     >
-                      <div className="mb-2 flex items-center gap-2 font-mono-ui text-[9px] uppercase tracking-[.12em] text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
+                      <div className="mb-2 flex items-center gap-2 font-mono-ui text-[9px] uppercase tracking-[.12em] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
                         <Sparkles size={12} /> completed{elapsed != null ? ` in ${elapsed}ms` : ''}
                       </div>
                       {rec ? (
@@ -2991,7 +4303,7 @@ function BuyerConsole({ subpage }: { subpage: string }) {
                   value={prompt}
                   onChange={(e) => setPrompt(e.target.value)}
                   placeholder="Ask Northstar to find something…"
-                  className="min-h-[76px] w-full resize-none rounded-xl border border-input bg-background p-3 pr-12 text-sm outline-none focus:border-[hsl(var(--accent))]"
+                  className="min-h-[76px] w-full resize-none rounded-xl border border-input bg-background p-3 pr-12 text-sm outline-none focus:border-[var(--commerce-signal)]"
                   data-testid="textarea-agent-prompt"
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -3015,6 +4327,7 @@ function BuyerConsole({ subpage }: { subpage: string }) {
                   setSubmitted(false);
                   setTraceSteps([]);
                   setTraceResult(null);
+                  setTraceEvidence(undefined);
                   setError(null);
                 }}
                 className="mt-3 font-mono-ui text-[10px] text-muted-foreground underline underline-offset-4 hover:text-foreground"
@@ -3034,7 +4347,7 @@ function BuyerConsole({ subpage }: { subpage: string }) {
               </div>
               <ShieldCheck
                 size={18}
-                className="text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]"
+                className="text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]"
               />
             </div>
             <div className="mt-8 space-y-4">
@@ -3072,10 +4385,14 @@ function Trace({
   steps,
   result,
   sessionId,
+  serverSignature,
+  sessionMaxSpend,
 }: {
   steps: TraceStep[];
   result: BuyerQueryResult | null;
   sessionId: string | null;
+  serverSignature?: string;
+  sessionMaxSpend?: number | null;
 }) {
   const rec = result?.recommendedProduct;
   const confidence = result?.confidence ?? 0;
@@ -3092,6 +4409,9 @@ function Trace({
     `product: ${rec?.sku ?? 'N/A'}`,
     `confidence: ${confidence.toFixed(3)}`,
     `policy_result: ${policyResult}`,
+    sessionMaxSpend != null
+      ? `session_cap: ₹${Number(sessionMaxSpend).toFixed(2)} (checked alongside merchant cap)`
+      : 'session_cap: none (merchant cap only)',
     degraded
       ? `data_source: ${recovered ? 'cached (degraded)' : 'unavailable'}`
       : 'data_source: live',
@@ -3106,9 +4426,9 @@ function Trace({
         : '  - policy not met',
     recovered ? '  ! used cached catalog data (supplier unreachable)' : '',
     '',
-    `signature: 0x${Array.from({ length: 64 }, () => Math.floor(Math.random() * 16).toString(16))
-      .join('')
-      .slice(0, 64)}`,
+    serverSignature
+      ? `signed_evidence: ${serverSignature}`
+      : 'signed_evidence: <awaiting server>',
   ]
     .filter(Boolean)
     .join('\n');
@@ -3123,20 +4443,20 @@ function Trace({
   ): { borderClass: string; dotClass: string; icon?: ReactNode } => {
     if (failureLabels.has(label))
       return {
-        borderClass: 'border-amber-500/50 bg-amber-500/5',
-        dotClass: 'border-amber-500/60 bg-amber-500/15 text-amber-600 dark:text-amber-400',
+        borderClass: 'border-warning/50 bg-warning/5',
+        dotClass: 'border-warning/60 bg-warning/15 text-warning',
         icon: <AlertTriangle size={11} />,
       };
     if (recoveryLabels.has(label))
       return {
-        borderClass: 'border-emerald-500/40 bg-emerald-500/5',
-        dotClass: 'border-emerald-500/50 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        borderClass: 'border-positive/40 bg-positive/5',
+        dotClass: 'border-positive/50 bg-positive/15 text-positive',
         icon: <RefreshCw size={11} />,
       };
     return {
       borderClass: '',
       dotClass:
-        'border-[hsl(var(--accent)/.5)] bg-[hsl(var(--accent)/.12)] text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]',
+        'border-[var(--commerce-signal)]/50 bg-[var(--commerce-signal)]/10 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]',
     };
   };
 
@@ -3198,21 +4518,21 @@ function Trace({
           })}
         </div>
       </div>
-      <div className="rounded-2xl border border-foreground/10 bg-[#1b2225] p-6 text-[#ece7d9]">
-        <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-white/50">
+      <div className="rounded-2xl border border-terminal bg-terminal p-6 text-terminal-foreground">
+        <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-terminal-muted">
           <Code2 size={14} /> signed evidence
           {degraded && (
-            <span className="ml-2 rounded bg-amber-600/30 px-2 py-0.5 text-amber-300">
+            <span className="ml-2 rounded bg-warning/30 px-2 py-0.5 text-warning">
               degraded mode
             </span>
           )}
         </div>
-        <pre className="mt-7 whitespace-pre-wrap font-mono-ui text-[10px] leading-6 text-white/75">
+        <pre className="mt-7 whitespace-pre-wrap font-mono-ui text-[10px] leading-6 text-terminal-foreground">
           {evidenceLines}
         </pre>
         <button
           onClick={handleCopy}
-          className="mt-8 flex items-center gap-2 rounded-lg border border-white/15 px-3 py-2 font-mono-ui text-[10px] text-white/65 hover:text-white"
+          className="mt-8 flex items-center gap-2 rounded-lg border border-terminal px-3 py-2 font-mono-ui text-[10px] text-terminal-muted hover:text-terminal-foreground"
           data-testid="button-copy-evidence"
         >
           <Copy size={13} /> Copy evidence
@@ -3227,21 +4547,25 @@ function Checkout({
   approved,
   onApprove,
   sessionId,
-  policyResult,
+  policy,
   viewer = 'merchant',
+  paymentState,
+  theme = 'light',
 }: {
   product: Product | null | undefined;
   approved: boolean;
   onApprove: () => void;
   sessionId: string | null;
-  policyResult: string | null;
+  policy: CheckoutStartPolicy | null;
   viewer?: 'merchant' | 'buyer';
+  paymentState?: 'idle' | 'pending_verification' | 'paid' | 'failed';
+  theme?: Theme;
 }) {
-  const name = product?.name ?? 'Lattice Desk Lamp';
-  const sku = product?.sku ?? 'LMP-044';
-  const price = product?.price ?? 148;
-  const seller = product?.sellerId ?? 'seller.almond';
-  const needsHuman = policyResult === 'human_approval_required';
+  const name = product?.name ?? '';
+  const sku = product?.sku ?? '';
+  const price = product?.price ?? 0;
+  const seller = product?.sellerId ?? '';
+  const needsHuman = policy?.decision === 'human_approval_required';
   const [paying, setPaying] = useState(false);
   const [payError, setPayError] = useState<{ title: string; message: ReactNode } | null>(null);
 
@@ -3252,48 +4576,83 @@ function Checkout({
     setPaying(true);
     setPayError(null);
     try {
-      // 1. Create an order record in our DB
-      const order = await createOrder({
-        productId: product.id,
-        buyerAgentId: 'buyer.northstar',
-        amount: product.price,
+      // 1. Server-authoritative basket: amount is recalculated from DB.
+      const workspaceId = getOrCreateBuyerWorkspaceId();
+      const basket = await createBasket(workspaceId, product.id);
+      // 2. Start checkout → server runs policy. When policy.requiresHumanApproval
+      // is true, the server returns 200 with the order in pending_human_review
+      // and NO razorpayOrderId. The user MUST click Approve which calls the
+      // dedicated /api/checkout/human-approve/:orderId route to mint the
+      // Razorpay order. Inline `approved` body field is rejected by the
+      // server.
+      let checkout: CheckoutStartResponse = await startCheckout({
+        basketId: basket.id,
+        workspaceId,
       });
-      // 2. Create a Razorpay order via our backend
-      const rpOrder = await createRazorpayOrder({
-        orderId: order.id,
-        amount: product.price,
-        currency: product.currency || 'INR',
-      });
-      // 3. Open the real Razorpay checkout modal
+      if (checkout.requiresHumanApproval) {
+        // User has clicked "Confirm manual override" → call the dedicated
+        // route. This flips status to human_approved and mints the
+        // Razorpay order id.
+        const approvedRes = await humanApproveCheckout(checkout.orderId);
+        checkout = {
+          ...checkout,
+          razorpayOrderId: approvedRes.razorpayOrderId,
+          keyId: approvedRes.keyId ?? checkout.keyId,
+        };
+      }
+      if (!checkout.razorpayOrderId) {
+        setPaying(false);
+        setPayError({
+          title: 'Checkout is awaiting approval',
+          message: 'The policy engine required a manual override that could not be recorded. Try again or contact support.',
+        });
+        return;
+      }
+      // 3. Open the real Razorpay checkout modal with server-issued order.
       const rzp = new window.Razorpay({
-        key: rpOrder.keyId,
-        order_id: rpOrder.razorpayOrderId,
-        amount: rpOrder.amount,
-        currency: rpOrder.currency,
+        key: checkout.keyId,
+        order_id: checkout.razorpayOrderId,
+        amount: checkout.amount,
+        currency: checkout.currency,
         name: 'Commerce0S',
         description: `Test payment — ${name}`,
-        handler: async (response) => {
-          // Payment success — poll verify endpoint until DB reflects 'paid'
-          try {
-            let attempts = 0;
-            const maxAttempts = 10;
-            while (attempts < maxAttempts) {
-              const verified = await verifyOrder(order.id);
+        handler: async (_response) => {
+          // Payment modal closed successfully — webhook may still be in
+          // flight. We poll the server's order state and only mark approved
+          // when the DB reflects 'paid'. Timeouts stay in pending state
+          // rather than faking success.
+          let attempts = 0;
+          const maxAttempts = 10;
+          while (attempts < maxAttempts) {
+            try {
+              const verified = await verifyOrder(checkout.orderId, workspaceId);
               if (verified.status === 'paid') {
                 setPaying(false);
                 onApprove();
                 return;
               }
-              await new Promise((r) => setTimeout(r, 1000));
-              attempts++;
+              if (verified.status === 'failed' || verified.status === 'declined') {
+                setPaying(false);
+                setPayError({
+                  title: 'Payment failed',
+                  message:
+                    "The payment provider rejected this transaction. Check the order's audit row for the reason.",
+                });
+                return;
+              }
+            } catch {
+              // Network blip; keep polling.
             }
-            // If we exhaust polling, still call onApprove — webhook may be delayed
-            setPaying(false);
-            onApprove();
-          } catch {
-            setPaying(false);
-            onApprove();
+            await new Promise((r) => setTimeout(r, 1000));
+            attempts++;
           }
+          // Polling exhausted without confirmation. Stay truthful.
+          setPaying(false);
+          setPayError({
+            title: 'Payment verification is still pending',
+            message:
+              'Razorpay accepted the payment but our webhook has not confirmed it yet. Do not retry payment until status is confirmed — this screen will update when the webhook arrives.',
+          });
         },
         modal: {
           ondismiss: () => {
@@ -3306,7 +4665,7 @@ function Checkout({
           },
         },
         prefill: { email: 'test@commerce0s.demo' },
-        theme: { color: '#1a1a1a' },
+        theme: { color: theme === 'dark' ? '#F06A5D' : '#A7342E' },
       });
       rzp.open();
     } catch (err) {
@@ -3314,6 +4673,18 @@ function Checkout({
       setPayError(mapCheckoutError(err, viewer, setLocation));
     }
   };
+
+  if (!product) {
+    return (
+      <div className="rounded-2xl border border-foreground/10 bg-card p-8 text-center">
+        <Package size={26} className="mx-auto text-muted-foreground" />
+        <p className="mt-3 font-display text-lg font-semibold">Pick a product first</p>
+        <p className="mt-1 text-sm text-muted-foreground">
+          Run a buyer query on the Agent Console and accept a recommendation before checking out.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-4 lg:grid-cols-[1fr_.75fr]">
@@ -3332,21 +4703,41 @@ function Checkout({
         <div className="mt-8 space-y-4 border-t border-foreground/10 pt-5 text-sm">
           <div className="flex justify-between">
             <span className="text-muted-foreground">Item</span>
-            <span>${price.toFixed(2)}</span>
+            <span>₹{price.toFixed(2)}</span>
           </div>
           <div className="flex justify-between">
             <span className="text-muted-foreground">Test-mode delivery</span>
-            <span>$0.00</span>
+            <span>₹0.00</span>
           </div>
           <div className="flex justify-between border-t border-foreground/10 pt-4 font-semibold">
             <span>Total</span>
-            <span>${price.toFixed(2)} USD</span>
+            <span>₹{price.toFixed(2)} INR</span>
           </div>
         </div>
+        {paymentState && paymentState !== 'idle' && (
+          <div
+            className={cn(
+              'mt-6 flex items-center gap-2 rounded-xl border p-3 font-mono-ui text-[10px]',
+              paymentState === 'paid'
+                ? 'border-positive/40 bg-positive/5 text-positive'
+                : paymentState === 'pending_verification'
+                  ? 'border-warning/40 bg-warning/5 text-warning'
+                  : 'border-destructive/40 bg-destructive/5 text-destructive',
+            )}
+            data-testid="checkout-payment-state"
+          >
+            {paymentState === 'paid' ? <Check size={12} /> : <Loader2 size={12} className="animate-spin" />}
+            {paymentState === 'paid'
+              ? 'Payment confirmed by Razorpay webhook'
+              : paymentState === 'pending_verification'
+                ? 'Verification pending — waiting for Razorpay webhook'
+                : 'Payment failed'}
+          </div>
+        )}
         {/* Policy check card — branches on real backend result */}
         {needsHuman ? (
-          <div className="mt-8 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
-            <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-amber-600 dark:text-amber-400">
+          <div className="mt-8 rounded-xl border border-warning/40 bg-warning/5 p-4">
+            <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-warning">
               <AlertTriangle size={14} /> above auto-approve limit
             </div>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
@@ -3354,16 +4745,16 @@ function Checkout({
               override.
             </p>
           </div>
-        ) : (
-          <div className="mt-8 rounded-xl border border-[hsl(var(--accent)/.4)] bg-[hsl(var(--accent)/.08)] p-4">
-            <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
+        ) : policy ? (
+          <div className="mt-8 rounded-xl border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 p-4">
+            <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
               <ShieldCheck size={14} /> policy check passed
             </div>
             <p className="mt-2 text-xs leading-5 text-muted-foreground">
               Within spending cap · delivery verified · seller trusted
             </p>
           </div>
-        )}
+        ) : null}
         {/* Error state */}
         {payError && (
           <div
@@ -3378,7 +4769,7 @@ function Checkout({
         )}
         <Button
           onClick={handlePay}
-          disabled={approved || paying}
+          disabled={approved || paying || paymentState === 'pending_verification'}
           className="mt-6 h-12 w-full rounded-lg bg-foreground text-background disabled:opacity-100"
           data-testid="button-approve-checkout"
         >
@@ -3386,9 +4777,13 @@ function Checkout({
             <>
               <Loader2 size={16} className="mr-2 animate-spin" /> Opening Razorpay…
             </>
+          ) : paymentState === 'pending_verification' ? (
+            <>
+              <Loader2 size={16} className="mr-2 animate-spin" /> Awaiting webhook…
+            </>
           ) : approved ? (
             <>
-              <Check size={16} className="mr-2 text-[hsl(var(--accent))]" />{' '}
+              <Check size={16} className="mr-2 text-[var(--commerce-signal)]" />{' '}
               {needsHuman ? 'Manual override recorded' : 'Test payment authorized'}
             </>
           ) : needsHuman ? (
@@ -3405,48 +4800,65 @@ function Checkout({
           Test / reversible · no real funds moved
         </p>
       </div>
-      <div className="rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
-        <div className="flex items-center justify-between">
-          <h3 className="font-display text-xl font-bold">Protocol receipt</h3>
-          <FileText size={18} className="text-muted-foreground" />
-        </div>
-        <div className="mt-7 space-y-5 font-mono-ui text-[10px]">
-          <div>
-            <p className="text-muted-foreground">PAYMENT MODE</p>
-            <p className="mt-1 text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]">
-              TEST / REVERSIBLE
-            </p>
+      <div className="space-y-4">
+        <div className="rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
+          <div className="flex items-center justify-between">
+            <h3 className="font-display text-xl font-bold">Policy decision</h3>
+            <ShieldCheck size={18} className="text-muted-foreground" />
           </div>
-          <div>
-            <p className="text-muted-foreground">AUTHORIZATION</p>
-            <p className="mt-1">
-              {approved
-                ? 'approved_by_northstar'
-                : paying
-                  ? 'razorpay_checkout_open'
-                  : 'awaiting_approval'}
-            </p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">TRACE ID</p>
-            <p className="mt-1">{sessionId ?? 'pending'}</p>
-          </div>
-          <div>
-            <p className="text-muted-foreground">SETTLEMENT</p>
-            <p className="mt-1">
-              {approved ? 'ledger.test / recorded' : paying ? 'processing' : 'not initiated'}
-            </p>
+          <div className="mt-5">
+            <PolicyDecisionCard policy={policy} amount={price} />
           </div>
         </div>
-        {approved && (
-          <div className="mt-10 rounded-lg bg-muted p-3 text-xs leading-5">
-            <Check
-              size={14}
-              className="mb-2 text-[hsl(var(--accent-foreground))] dark:text-[hsl(var(--accent))]"
-            />
-            Receipt recorded. No real funds moved.
+        <div className="rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
+          <div className="flex items-center justify-between">
+            <h3 className="font-display text-xl font-bold">Protocol receipt</h3>
+            <FileText size={18} className="text-muted-foreground" />
           </div>
-        )}
+          <div className="mt-7 space-y-5 font-mono-ui text-[10px]">
+            <div>
+              <p className="text-muted-foreground">PAYMENT MODE</p>
+              <p className="mt-1 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]">
+                TEST / REVERSIBLE
+              </p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">AUTHORIZATION</p>
+              <p className="mt-1">
+                {approved
+                  ? 'approved_by_northstar'
+                  : paying
+                    ? 'razorpay_checkout_open'
+                    : 'awaiting_approval'}
+              </p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">SESSION ID</p>
+              <p className="mt-1">{sessionId ?? 'pending'}</p>
+            </div>
+            <div>
+              <p className="text-muted-foreground">SETTLEMENT</p>
+              <p className="mt-1">
+                {paymentState === 'paid'
+                  ? 'ledger.test / recorded'
+                  : paymentState === 'pending_verification'
+                    ? 'awaiting webhook'
+                    : paying
+                      ? 'processing'
+                      : 'not initiated'}
+              </p>
+            </div>
+          </div>
+          {approved && paymentState === 'paid' && (
+            <div className="mt-10 rounded-lg bg-muted p-3 text-xs leading-5">
+              <Check
+                size={14}
+                className="mb-2 text-[var(--commerce-signal-foreground)] dark:text-[var(--commerce-signal)]"
+              />
+              Receipt recorded. No real funds moved.
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -3528,6 +4940,30 @@ function mapCheckoutError(
           message:
             'Something went wrong on our side. Please try again, or contact support if it persists.',
         };
+      case 'HUMAN_APPROVAL_REQUIRED':
+        return {
+          title: 'Approval required',
+          message:
+            'This purchase is above your session spending limit or the merchant cap. Review the policy card and confirm to continue.',
+        };
+      case 'MERCHANT_CEILING_EXCEEDED':
+      case 'BUYER_CEILING_EXCEEDED':
+      case 'BOTH_CEILINGS_EXCEEDED':
+        return {
+          title: 'Above spending limit',
+          message: err.message || 'This basket exceeds a configured ceiling and needs approval.',
+        };
+      case 'PAYMENT_VERIFICATION_PENDING':
+        return {
+          title: 'Payment verification is still pending',
+          message:
+            'Do not retry payment until status is confirmed. We will update this screen when the webhook arrives.',
+        };
+      case 'INVENTORY_UNAVAILABLE':
+        return {
+          title: 'Out of stock',
+          message: err.message || 'One of the items is no longer available.',
+        };
       case 'INVALID_REQUEST':
         return {
           title: 'Invalid request',
@@ -3558,16 +4994,6 @@ function MerchantShell({ theme, onToggle }: { theme: Theme; onToggle: () => void
     queryFn: fetchDebugStatus,
     refetchInterval: 3000,
   });
-  const toggleMutation = useMutation({
-    mutationFn: (enabled: boolean) => toggleDebugFailure(enabled),
-    onError: () => {
-      toast({
-        variant: 'destructive',
-        title: "Couldn't update debug mode",
-        description: 'Check your connection and try again.',
-      });
-    },
-  });
   const page = location.replace(/\/$/, '') || '/merchant';
   const view =
     page === '/merchant/catalog' ? (
@@ -3584,17 +5010,6 @@ function MerchantShell({ theme, onToggle }: { theme: Theme; onToggle: () => void
       <MerchantOverview />
     );
   const simulating = debugStatus?.simulateSupplierFailure ?? false;
-
-  const handleToggleSimulate = async () => {
-    const next = !simulating;
-    await toggleMutation.mutateAsync(next);
-    toast({
-      title: next ? 'Failure simulation enabled' : 'Failure simulation disabled',
-      description: next
-        ? 'Supplier outages will be simulated for the next query.'
-        : 'Normal supplier connectivity restored.',
-    });
-  };
 
   return (
     <div className="min-h-[100dvh] bg-background text-foreground">
@@ -3618,28 +5033,37 @@ function MerchantShell({ theme, onToggle }: { theme: Theme; onToggle: () => void
           onToggle={onToggle}
           onMobileMenu={() => setMobile(true)}
         />
-        <div className="border-b border-foreground/10 bg-amber-500/5 px-4 py-2 sm:px-7">
+        <div className="border-b border-foreground/10 bg-warning-soft px-4 py-2 sm:px-7">
           <div className="mx-auto flex max-w-[1440px] items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="flex items-center gap-2 rounded-full border border-amber-500/40 bg-amber-500/10 px-3 py-1 font-mono-ui text-[10px] text-amber-700 dark:text-amber-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                {simulating ? 'Supplier outage simulated' : 'Supplier normal'}
+              <span
+                className={cn(
+                  'flex items-center gap-2 rounded-full border px-3 py-1 font-mono-ui text-[10px]',
+                  simulating
+                    ? 'border-warning/40 bg-warning/10 text-warning'
+                    : 'border-positive/40 bg-positive/10 text-positive',
+                )}
+                data-testid="supplier-status-indicator"
+              >
+                <span
+                  className={cn(
+                    'h-1.5 w-1.5 rounded-full',
+                    simulating ? 'bg-warning' : 'bg-positive',
+                  )}
+                />
+                {simulating ? 'Supplier: simulated outage' : 'Supplier: healthy'}
               </span>
-              <span className="font-mono-ui text-[10px] text-muted-foreground">Demo control</span>
+              <span className="font-mono-ui text-[10px] text-muted-foreground">
+                demo control lives in Settings
+              </span>
             </div>
-            <button
-              onClick={handleToggleSimulate}
-              disabled={toggleMutation.isPending}
-              className="inline-flex items-center gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 font-mono-ui text-[10px] text-amber-700 hover:bg-amber-500/15 disabled:opacity-50 dark:text-amber-200"
-              data-testid="button-toggle-simulate-failure"
+            <a
+              href="/merchant/settings"
+              className="inline-flex items-center gap-2 rounded-lg border border-foreground/20 px-3 py-1.5 font-mono-ui text-[10px] hover:bg-foreground/[.06]"
+              data-testid="link-settings-from-topbar"
             >
-              {toggleMutation.isPending ? (
-                <Loader2 size={12} className="animate-spin" />
-              ) : (
-                <AlertTriangle size={12} />
-              )}
-              {simulating ? 'Stop outage' : 'Simulate outage'}
-            </button>
+              <Radio size={12} /> Open settings
+            </a>
           </div>
         </div>
         <main className="mx-auto max-w-[1440px] px-4 py-8 sm:px-7 sm:py-10 lg:px-10">{view}</main>
@@ -3676,7 +5100,7 @@ function BuyerShell({ theme, onToggle }: { theme: Theme; onToggle: () => void })
           onMobileMenu={() => setMobile(true)}
         />
         <main className="mx-auto max-w-[1440px] px-4 py-8 sm:px-7 sm:py-10 lg:px-10">
-          <BuyerConsole subpage={page} />
+          <BuyerConsole subpage={page} theme={theme} />
         </main>
       </div>
     </div>
@@ -3717,6 +5141,11 @@ function AppRouter({
   );
 }
 
+function TransactionDrawerMount() {
+  const [txn, setTxn] = useOpenTransaction();
+  return <TransactionDetailDrawer txnId={txn} onClose={() => setTxn(null)} />;
+}
+
 function App() {
   const [theme, setTheme] = useState<Theme>(
     () => (localStorage.getItem('commerce0s-theme') as Theme) || 'light',
@@ -3731,13 +5160,36 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <ErrorBoundary resetKey={location}>
-          <AppRouter theme={theme} onToggle={toggleTheme} onChooseRole={chooseRole} />
-        </ErrorBoundary>
+        <WorkspaceProvider>
+          <BootstrapErrorBridge />
+          <ErrorBoundary resetKey={location}>
+            <AppRouter theme={theme} onToggle={toggleTheme} onChooseRole={chooseRole} />
+          </ErrorBoundary>
+          <TransactionDrawerMount />
+        </WorkspaceProvider>
         <Toaster />
       </TooltipProvider>
     </QueryClientProvider>
   );
+}
+
+/** Surfaces bootstrap failures via the existing toast system without blocking
+ *  the rest of the UI. Retries are user-initiated from the toast action. */
+function BootstrapErrorBridge() {
+  const { status, error, retry } = useWorkspace();
+  const { toast } = useToast();
+  useEffect(() => {
+    if (status !== 'error' || !error) return;
+    toast({
+      title: 'Workspace sync paused',
+      description: error,
+      variant: 'destructive',
+      action: <button onClick={retry} className="font-mono-ui text-[10px] uppercase tracking-[.12em]">Retry</button>,
+    });
+    // Only fire on the error transition, not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, error]);
+  return null;
 }
 
 export default App;

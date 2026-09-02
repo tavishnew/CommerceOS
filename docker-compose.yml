@@ -34,6 +34,10 @@ services:
       RAZORPAY_KEY_ID: rzp_test_XXXXXXXXXXXXXXXX
       RAZORPAY_KEY_SECRET: XXXXXXXXXXXXXXXX
       RAZORPAY_WEBHOOK_SECRET: XXXXXXXXXXXXXXXX
+      # Set to "1" in environments running automated tests; the checkout
+      # and refund routes short-circuit the real Razorpay call so the
+      # state machine can be exercised without live credentials.
+      TEST_MODE_NO_RAZORPAY: ${TEST_MODE_NO_RAZORPAY:-0}
     ports:
       - "5000:5000"
     volumes:
@@ -44,12 +48,21 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       target: dev
+      args:
+        # VITE_API_URL is read by Vite at dev-server start time. Set this in
+        # the host shell (export VITE_API_URL=...) when running through a
+        # shared DevTunnel so the browser bundle points at the tunnel API
+        # origin. Local dev can leave it unset; the fallback in src/lib/api.ts
+        # is http://localhost:5000.
+        VITE_API_URL: ${VITE_API_URL:-}
     restart: unless-stopped
     depends_on:
       - api
     environment:
       PORT: "5173"
       BASE_PATH: /
+      # Also pass it at runtime so `pnpm dev` re-reads on container start.
+      VITE_API_URL: ${VITE_API_URL:-}
     ports:
       - "5173:5173"
     volumes:

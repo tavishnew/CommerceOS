@@ -16,20 +16,6 @@ interface ErrorBoundaryState {
   error: Error | null;
 }
 
-function toError(value: unknown): Error {
-  if (value instanceof Error) {
-    return value;
-  }
-  if (typeof value === 'string') {
-    return new Error(value);
-  }
-  try {
-    return new Error(JSON.stringify(value));
-  } catch {
-    return new Error(String(value));
-  }
-}
-
 function DefaultFallback({ error, resetError }: ErrorFallbackProps) {
   return (
     <div className="min-h-screen w-full flex items-center justify-center bg-gray-50 p-6">
@@ -60,11 +46,15 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   state: ErrorBoundaryState = { error: null };
 
   static getDerivedStateFromError(error: unknown): ErrorBoundaryState {
-    return { error: toError(error) };
+    return { error: error instanceof Error ? error : new Error(String(error)) };
   }
 
   componentDidCatch(error: unknown, info: ErrorInfo): void {
-    console.error('ErrorBoundary caught an error:', toError(error), info.componentStack);
+    console.error(
+      'ErrorBoundary caught an error:',
+      error instanceof Error ? error : new Error(String(error)),
+      info.componentStack,
+    );
   }
 
   componentDidUpdate(prevProps: ErrorBoundaryProps): void {

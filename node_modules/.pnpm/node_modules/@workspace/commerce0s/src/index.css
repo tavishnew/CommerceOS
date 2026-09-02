@@ -1,61 +1,183 @@
-@import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,600;12..96,700&family=DM+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Manrope:wght@400;500;600;700&family=DM+Mono:wght@400;500&display=swap');
 @import 'tailwindcss';
 @import 'tw-animate-css';
-@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
+/*
+ * Commerce0S palette — ink / ivory / graphite / oxide-vermilion.
+ * Tokens are referenced by var(--commerce-*) throughout the app. Tailwind
+ * shadcn aliases (background/foreground/card/accent) remap to the same
+ * design-system values so existing utility classes keep working.
+ */
+:root {
+  /* Light */
+  --commerce-surface: #f7f2e8;          /* ivory */
+  --commerce-surface-raised: #fdfbf6;   /* paper */
+  --commerce-surface-sunken: #ede7d7;   /* canvas */
+  --commerce-ink: #171a23;              /* ink */
+  --commerce-text: #171a23;
+  --commerce-text-muted: #555b68;       /* graphite */
+  --commerce-border: #d7d0c4;           /* rule */
+  --commerce-border-strong: #b9b1a1;
+  --commerce-signal: #c9473d;            /* oxide vermilion — design spec */
+  --commerce-signal-strong: #a7342e;     /* strong signal / pressed — design spec */
+  --commerce-signal-foreground: #f7f2e8;
+  --commerce-signal-soft: #f3dcd7;
+  --commerce-focus: #8d2b26;             /* keyboard focus indicator — design spec */
+  --commerce-positive: #2e6b4f;
+  --commerce-positive-foreground: #f7f2e8;
+  --commerce-positive-soft: #e3efe7;
+  --commerce-warning: #b56b1a;
+  --commerce-warning-foreground: #f7f2e8;
+  --commerce-warning-soft: #f5e4ce;
+  --commerce-critical: #a7342e;
+  --commerce-critical-foreground: #f7f2e8;
+  --commerce-critical-soft: #f3dcd7;
+
+  /* Terminal/evidence surfaces — protocol panels (checkouts, traces, debug). */
+  --terminal-surface: #1b2225;
+  --terminal-text: #ece7d9;
+  --terminal-muted: #a9b0a6;
+  --terminal-border: rgba(236, 231, 217, 0.18);
+
+  /* Status surface tokens — pair with icon/label, never color alone. */
+  --status-success: #2e6b4f;
+  --status-success-surface: #e3efe7;
+  --status-warning: #b56b1a;
+  --status-warning-surface: #f5e4ce;
+
+  /* Tailwind v4 color aliases — light mode */
+  --background: var(--commerce-surface);
+  --foreground: var(--commerce-ink);
+  --border: var(--commerce-border);
+  --input: var(--commerce-border);
+  --ring: var(--commerce-signal);
+  --card: var(--commerce-surface-raised);
+  --card-foreground: var(--commerce-ink);
+  --card-border: var(--commerce-border);
+  --popover: var(--commerce-surface-raised);
+  --popover-foreground: var(--commerce-ink);
+  --popover-border: var(--commerce-border);
+  --primary: var(--commerce-ink);
+  --primary-foreground: var(--commerce-surface);
+  --secondary: var(--commerce-surface-sunken);
+  --secondary-foreground: var(--commerce-ink);
+  --muted: var(--commerce-surface-sunken);
+  --muted-foreground: var(--commerce-text-muted);
+  --accent: var(--commerce-signal);
+  --accent-foreground: var(--commerce-signal-foreground);
+  --destructive: var(--commerce-signal-strong);
+  --destructive-foreground: var(--commerce-surface);
+}
+
+.dark {
+  /* Dark */
+  --commerce-surface: #11151c;          /* ink */
+  --commerce-surface-raised: #191e27;   /* graphite */
+  --commerce-surface-sunken: #0a0d12;   /* obsidian */
+  --commerce-ink: #f4efe5;              /* ivory */
+  --commerce-text: #f4efe5;
+  --commerce-text-muted: #b8bfca;
+  --commerce-border: #3e4653;           /* rule — design spec */
+  --commerce-border-strong: #4a525f;
+  --commerce-signal: #f06a5d;           /* vermilion glow — design spec */
+  --commerce-signal-strong: #ff8a7e;    /* strong signal — design spec */
+  --commerce-signal-foreground: #11151c;
+  --commerce-signal-soft: #2a1a1a;
+  --commerce-focus: #ff8a7e;             /* keyboard focus indicator — design spec */
+  --commerce-positive: #6fbf95;
+  --commerce-positive-foreground: #11151c;
+  --commerce-positive-soft: #153326;
+  --commerce-warning: #d99850;
+  --commerce-warning-foreground: #11151c;
+  --commerce-warning-soft: #3a2b12;
+  --commerce-critical: #ff8a7e;
+  --commerce-critical-foreground: #11151c;
+  --commerce-critical-soft: #2a1a1a;
+
+  /* Terminal/evidence surfaces — protocol panels (checkouts, traces, debug). */
+  --terminal-surface: #0c1015;
+  --terminal-text: #f4efe5;
+  --terminal-muted: #b8bfca;
+  --terminal-border: rgba(244, 239, 229, 0.2);
+
+  /* Status surface tokens — pair with icon/label, never color alone. */
+  --status-success: #6fbf95;
+  --status-success-surface: #153326;
+  --status-warning: #d99850;
+  --status-warning-surface: #3a2b12;
+
+  /* Tailwind v4 color aliases — dark mode */
+  --background: var(--commerce-surface);
+  --foreground: var(--commerce-ink);
+  --border: var(--commerce-border);
+  --input: var(--commerce-border);
+  --ring: var(--commerce-signal);
+  --card: var(--commerce-surface-raised);
+  --card-foreground: var(--commerce-ink);
+  --card-border: var(--commerce-border);
+  --popover: var(--commerce-surface-raised);
+  --popover-foreground: var(--commerce-ink);
+  --popover-border: var(--commerce-border);
+  --primary: var(--commerce-ink);
+  --primary-foreground: var(--commerce-surface);
+  --secondary: var(--commerce-surface-sunken);
+  --secondary-foreground: var(--commerce-ink);
+  --muted: var(--commerce-surface-sunken);
+  --muted-foreground: var(--commerce-text-muted);
+  --accent: var(--commerce-signal);
+  --accent-foreground: var(--commerce-signal-foreground);
+  --destructive: var(--commerce-signal-strong);
+  --destructive-foreground: var(--commerce-surface);
+}
+
 @theme inline {
-  --color-background: hsl(var(--background));
-  --color-foreground: hsl(var(--foreground));
-  --color-border: hsl(var(--border));
-  --color-input: hsl(var(--input));
-  --color-ring: hsl(var(--ring));
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
 
-  --color-card: hsl(var(--card));
-  --color-card-foreground: hsl(var(--card-foreground));
-  --color-card-border: hsl(var(--card-border));
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-card-border: var(--card-border);
 
-  --color-popover: hsl(var(--popover));
-  --color-popover-foreground: hsl(var(--popover-foreground));
-  --color-popover-border: hsl(var(--popover-border));
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover-border: var(--popover-border);
 
-  --color-primary: hsl(var(--primary));
-  --color-primary-foreground: hsl(var(--primary-foreground));
-  --color-primary-border: var(--primary-border);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
 
-  --color-secondary: hsl(var(--secondary));
-  --color-secondary-foreground: hsl(var(--secondary-foreground));
-  --color-secondary-border: var(--secondary-border);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
 
-  --color-muted: hsl(var(--muted));
-  --color-muted-foreground: hsl(var(--muted-foreground));
-  --color-muted-border: var(--muted-border);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
 
-  --color-accent: hsl(var(--accent));
-  --color-accent-foreground: hsl(var(--accent-foreground));
-  --color-accent-border: var(--accent-border);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
 
-  --color-destructive: hsl(var(--destructive));
-  --color-destructive-foreground: hsl(var(--destructive-foreground));
-  --color-destructive-border: var(--destructive-border);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
 
-  --color-chart-1: hsl(var(--chart-1));
-  --color-chart-2: hsl(var(--chart-2));
-  --color-chart-3: hsl(var(--chart-3));
-  --color-chart-4: hsl(var(--chart-4));
-  --color-chart-5: hsl(var(--chart-5));
+  /* Status semantic colors — pair with an icon or shape, never color alone. */
+  --color-positive: var(--commerce-positive);
+  --color-positive-foreground: var(--commerce-positive-foreground);
+  --color-positive-soft: var(--commerce-positive-soft);
+  --color-warning: var(--commerce-warning);
+  --color-warning-foreground: var(--commerce-warning-foreground);
+  --color-warning-soft: var(--commerce-warning-soft);
+  --color-critical: var(--commerce-critical);
+  --color-critical-foreground: var(--commerce-critical-foreground);
+  --color-critical-soft: var(--commerce-critical-soft);
 
-  --color-sidebar: hsl(var(--sidebar));
-  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
-  --color-sidebar-border: hsl(var(--sidebar-border));
-  --color-sidebar-primary: hsl(var(--sidebar-primary));
-  --color-sidebar-primary-foreground: hsl(var(--sidebar-primary-foreground));
-  --color-sidebar-primary-border: var(--sidebar-primary-border);
-  --color-sidebar-accent: hsl(var(--sidebar-accent));
-  --color-sidebar-accent-foreground: hsl(var(--sidebar-accent-foreground));
-  --color-sidebar-accent-border: var(--sidebar-accent-border);
-  --color-sidebar-ring: hsl(var(--sidebar-ring));
+  /* Terminal/evidence surfaces — bg + text for protocol-style panels. */
+  --color-terminal: var(--terminal-surface);
+  --color-terminal-foreground: var(--terminal-text);
+  --color-terminal-muted: var(--terminal-muted);
+  --color-terminal-border: var(--terminal-border);
 
   --font-sans: var(--app-font-sans);
   --font-serif: var(--app-font-serif);
@@ -67,243 +189,47 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* LIGHT MODE */
+/* LIGHT MODE (system primitives only — palette lives in :root above) */
 :root {
-  --button-outline: rgba(0, 0, 0, 0.1);
-  --badge-outline: rgba(0, 0, 0, 0.05);
+  --button-outline: rgba(23, 26, 35, 0.1);
+  --badge-outline: rgba(23, 26, 35, 0.05);
+  --opaque-button-border-intensity: -8;
+  --elevate-1: rgba(23, 26, 35, 0.03);
+  --elevate-2: rgba(23, 26, 35, 0.08);
 
-  /* Automatic computation of border around primary / danger buttons */
-  --opaque-button-border-intensity: -8; /* In terms of percentages */
-
-  /* Backgrounds applied on top of other backgrounds when hovered/active */
-  --elevate-1: rgba(0, 0, 0, 0.03);
-  --elevate-2: rgba(0, 0, 0, 0.08);
-
-  --background: 42 32% 93%;
-
-  --foreground: 220 21% 13%;
-
-  --border: 40 16% 80%;
-
-  --card: 42 38% 97%;
-
-  --card-foreground: 220 21% 13%;
-
-  --card-border: 40 16% 80%;
-
-  --sidebar: 220 22% 15%;
-
-  --sidebar-foreground: 42 32% 93%;
-
-  --sidebar-border: 220 17% 25%;
-
-  --sidebar-primary: 7 74% 58%;
-
-  --sidebar-primary-foreground: 220 21% 13%;
-
-  --sidebar-accent: 220 18% 21%;
-
-  --sidebar-accent-foreground: 42 32% 93%;
-
-  --sidebar-ring: 7 74% 58%;
-
-  --popover: 42 38% 97%;
-
-  --popover-foreground: 220 21% 13%;
-
-  --popover-border: 40 16% 80%;
-
-  --primary: 220 22% 15%;
-
-  --primary-foreground: 7 74% 58%;
-
-  --secondary: 38 24% 87%;
-
-  --secondary-foreground: 220 21% 13%;
-
-  --muted: 40 20% 88%;
-
-  --muted-foreground: 220 10% 43%;
-
-  --accent: 7 74% 58%;
-
-  --accent-foreground: 220 21% 13%;
-
-  --destructive: 8 65% 54%;
-
-  --destructive-foreground: 42 38% 97%;
-
-  --input: 40 16% 74%;
-  --ring: 7 74% 48%;
-  --chart-1: 7 74% 48%;
-  --chart-2: 220 22% 15%;
-  --chart-3: 8 65% 54%;
-  --chart-4: 180 24% 38%;
-  --chart-5: 32 55% 52%;
-
-  --app-font-sans: 'IBM Plex Sans', sans-serif;
-  --app-font-serif: 'Bricolage Grotesque', sans-serif;
-  --app-font-mono: 'DM Mono', monospace;
-  --radius: 0.5rem; /* 8px */
-  --shadow-2xs: 0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0); /*replace with H S L */
-  --shadow-xs: 0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0); /*replace with H S L */
-  --shadow-sm:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 1px 2px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 1px 2px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-md:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 2px 4px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-lg:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 4px 6px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-xl:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 8px 10px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-2xl: 0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0);
+  /* Typography — Commerce0S: Space Grotesk (display), Manrope (interface), DM Mono (protocol) */
+  --app-font-sans: 'Manrope', system-ui, sans-serif;
+  --app-font-serif: 'Space Grotesk', system-ui, sans-serif;
+  --app-font-mono: 'DM Mono', ui-monospace, monospace;
+  --radius: 0.625rem; /* 10px — warm, slightly softer than 8 */
   --tracking-normal: 0em;
   --spacing: 0.25rem;
 
-  /* Automatically computed borders - intensity can be controlled by the user by the --opaque-button-border-intensity setting */
-
-  /* Fallback for older browsers */
-  --sidebar-primary-border: hsl(var(--sidebar-primary));
-  --sidebar-primary-border: hsl(
-    from hsl(var(--sidebar-primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
-  );
-
-  /* Fallback for older browsers */
-  --sidebar-accent-border: hsl(var(--sidebar-accent));
-  --sidebar-accent-border: hsl(
-    from hsl(var(--sidebar-accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
-  );
-
-  /* Fallback for older browsers */
-  --primary-border: hsl(var(--primary));
-  --primary-border: hsl(
-    from hsl(var(--primary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
-  );
-
-  /* Fallback for older browsers */
-  --secondary-border: hsl(var(--secondary));
-  --secondary-border: hsl(
-    from hsl(var(--secondary)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
-  );
-
-  /* Fallback for older browsers */
-  --muted-border: hsl(var(--muted));
-  --muted-border: hsl(
-    from hsl(var(--muted)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
-  );
-
-  /* Fallback for older browsers */
-  --accent-border: hsl(var(--accent));
-  --accent-border: hsl(
-    from hsl(var(--accent)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
-  );
-
-  /* Fallback for older browsers */
-  --destructive-border: hsl(var(--destructive));
-  --destructive-border: hsl(
-    from hsl(var(--destructive)) h s calc(l + var(--opaque-button-border-intensity)) / alpha
-  );
+  --shadow-2xs: 0 1px 2px rgba(23, 26, 35, 0.04);
+  --shadow-xs: 0 1px 2px rgba(23, 26, 35, 0.05);
+  --shadow-sm: 0 1px 3px rgba(23, 26, 35, 0.07), 0 1px 2px rgba(23, 26, 35, 0.05);
+  --shadow: 0 2px 4px rgba(23, 26, 35, 0.06), 0 1px 2px rgba(23, 26, 35, 0.04);
+  --shadow-md: 0 6px 16px rgba(23, 26, 35, 0.08), 0 2px 4px rgba(23, 26, 35, 0.05);
+  --shadow-lg: 0 12px 28px rgba(23, 26, 35, 0.1), 0 4px 8px rgba(23, 26, 35, 0.05);
+  --shadow-xl: 0 20px 40px rgba(23, 26, 35, 0.14), 0 8px 16px rgba(23, 26, 35, 0.06);
+  --shadow-2xl: 0 32px 64px rgba(23, 26, 35, 0.18);
 }
 
 .dark {
-  --button-outline: rgba(255, 255, 255, 0.1);
-  --badge-outline: rgba(255, 255, 255, 0.05);
+  --button-outline: rgba(244, 239, 229, 0.12);
+  --badge-outline: rgba(244, 239, 229, 0.06);
+  --opaque-button-border-intensity: 9;
+  --elevate-1: rgba(244, 239, 229, 0.04);
+  --elevate-2: rgba(244, 239, 229, 0.09);
 
-  --opaque-button-border-intensity: 9; /* In terms of percentages */
-
-  /* Backgrounds applied on top of other backgrounds when hovered/active */
-  --elevate-1: rgba(255, 255, 255, 0.04);
-  --elevate-2: rgba(255, 255, 255, 0.09);
-
-  --background: 220 22% 9%;
-
-  --foreground: 42 32% 93%;
-
-  --border: 220 17% 25%;
-
-  --card: 220 19% 13%;
-
-  --card-foreground: 42 32% 93%;
-
-  --card-border: 220 17% 25%;
-
-  --sidebar: 220 25% 7%;
-
-  --sidebar-foreground: 42 32% 93%;
-
-  --sidebar-border: 220 17% 20%;
-
-  --sidebar-primary: 7 74% 64%;
-
-  --sidebar-primary-foreground: 220 21% 13%;
-
-  --sidebar-accent: 220 18% 15%;
-
-  --sidebar-accent-foreground: 42 32% 93%;
-
-  --sidebar-ring: 7 74% 64%;
-
-  --popover: 220 19% 13%;
-
-  --popover-foreground: 42 32% 93%;
-
-  --popover-border: 220 17% 25%;
-
-  --primary: 52 100% 72%;
-
-  --primary-foreground: 220 21% 13%;
-
-  --secondary: 220 18% 16%;
-
-  --secondary-foreground: 42 32% 93%;
-
-  --muted: 220 18% 16%;
-
-  --muted-foreground: 220 10% 65%;
-
-  --accent: 7 74% 64%;
-
-  --accent-foreground: 220 21% 13%;
-
-  --destructive: 8 65% 60%;
-
-  --destructive-foreground: 220 22% 9%;
-
-  /* Used as the border around inputs. Dark mode: Should be a border that is light enough to have high contrast when rendered on a --card background. More contrast than standard --border */
-  --input: 220 17% 32%;
-  --ring: 7 74% 64%;
-  --chart-1: 7 74% 64%;
-  --chart-2: 42 32% 93%;
-  --chart-3: 8 65% 60%;
-  --chart-4: 180 32% 55%;
-  --chart-5: 32 65% 62%;
-
-  --app-font-sans: 'IBM Plex Sans', sans-serif;
-  --app-font-serif: 'Bricolage Grotesque', sans-serif;
-  --app-font-mono: 'DM Mono', monospace;
-  --shadow-xs: 0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-sm:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 1px 2px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 1px 2px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-md:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 2px 4px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-lg:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 4px 6px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-xl:
-    0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0),
-    0px 8px 10px -1px hsl(202.8169 89.1213% 53.1373% / 0);
-  --shadow-2xl: 0px 2px 0px 0px hsl(202.8169 89.1213% 53.1373% / 0);
+  --shadow-2xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.45), 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow: 0 2px 4px rgba(0, 0, 0, 0.4), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 6px 16px rgba(0, 0, 0, 0.5), 0 2px 4px rgba(0, 0, 0, 0.35);
+  --shadow-lg: 0 12px 28px rgba(0, 0, 0, 0.55), 0 4px 8px rgba(0, 0, 0, 0.35);
+  --shadow-xl: 0 20px 40px rgba(0, 0, 0, 0.6), 0 8px 16px rgba(0, 0, 0, 0.4);
+  --shadow-2xl: 0 32px 64px rgba(0, 0, 0, 0.7);
 }
 
 @layer base {
@@ -345,7 +271,7 @@
   /* Placeholder styling for contentEditable div */
   [contenteditable][data-placeholder]:empty::before {
     content: attr(data-placeholder);
-    color: hsl(var(--muted-foreground));
+    color: var(--muted-foreground);
     pointer-events: none;
   }
 
@@ -442,8 +368,54 @@
     -webkit-tap-highlight-color: transparent;
   }
   ::selection {
-    background: hsl(var(--accent));
-    color: hsl(var(--accent-foreground));
+    background: var(--commerce-signal);
+    color: var(--commerce-signal-foreground);
+  }
+
+  /* Visible keyboard focus on every interactive element.
+     3px offset, design-spec focus token. Mouse focus is suppressed so the
+     ring only appears for keyboard users. */
+  :focus-visible {
+    outline: 2px solid var(--commerce-focus);
+    outline-offset: 3px;
+    border-radius: inherit;
+  }
+}
+
+/* Status semantic tokens — pair with an icon or shape, never color alone. */
+:root {
+  --commerce-positive: #2e6b4f;
+  --commerce-positive-foreground: #f7f2e8;
+  --commerce-positive-soft: #e4efe9;
+  --commerce-warning: #a8551f;
+  --commerce-warning-foreground: #f7f2e8;
+  --commerce-warning-soft: #f6e8d8;
+  --commerce-critical: #a7342e;
+  --commerce-critical-foreground: #f7f2e8;
+  --commerce-critical-soft: #f3dcd7;
+}
+.dark {
+  --commerce-positive: #6fbf95;
+  --commerce-positive-foreground: #11151c;
+  --commerce-positive-soft: #142019;
+  --commerce-warning: #d99850;
+  --commerce-warning-foreground: #11151c;
+  --commerce-warning-soft: #2a1f12;
+  --commerce-critical: #ff8a7e;
+  --commerce-critical-foreground: #11151c;
+  --commerce-critical-soft: #2a1414;
+}
+
+/* Reduced-motion: kill decorative animation/transitions but keep state changes.
+   Content and layout are unaffected — only motion is suppressed. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -455,14 +427,8 @@
     font-family: var(--app-font-mono);
   }
   .signal-rule {
-    background: linear-gradient(90deg, hsl(var(--accent)), transparent);
+    background: linear-gradient(90deg, var(--commerce-signal), transparent);
     height: 1px;
-  }
-  .grid-paper {
-    background-image:
-      linear-gradient(hsl(var(--foreground) / 0.055) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--foreground) / 0.055) 1px, transparent 1px);
-    background-size: 32px 32px;
   }
   .grain::after {
     content: '';
@@ -484,27 +450,27 @@
   }
   .wireframe-grid {
     background-image:
-      linear-gradient(hsl(var(--accent) / 0.22) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(var(--accent) / 0.22) 1px, transparent 1px);
+      linear-gradient(color-mix(in oklab, var(--commerce-signal) 22%, transparent) 1px, transparent 1px),
+      linear-gradient(90deg, color-mix(in oklab, var(--commerce-signal) 22%, transparent) 1px, transparent 1px);
     background-size: 28px 28px;
-    box-shadow: 0 0 70px hsl(var(--accent) / 0.08);
+    box-shadow: 0 0 70px color-mix(in oklab, var(--commerce-signal) 8%, transparent);
   }
   .scanline {
-    background: linear-gradient(90deg, transparent, hsl(var(--accent) / 0.7), transparent);
+    background: linear-gradient(90deg, transparent, color-mix(in oklab, var(--commerce-signal) 70%, transparent), transparent);
   }
   .status-live {
-    box-shadow: 0 0 0 4px hsl(var(--accent) / 0.11);
+    box-shadow: 0 0 0 4px color-mix(in oklab, var(--commerce-signal) 18%, transparent);
   }
   .network-stage {
     isolation: isolate;
-    background-color: hsl(var(--foreground) / 0.055);
+    background-color: color-mix(in oklab, var(--commerce-ink) 4%, transparent);
     background:
-      radial-gradient(circle at 50% 52%, hsl(var(--accent) / 0.1), transparent 24%),
-      radial-gradient(circle at 12% 12%, hsl(var(--foreground) / 0.06), transparent 28%),
-      linear-gradient(135deg, hsl(var(--foreground) / 0.035), transparent 55%);
+      radial-gradient(circle at 50% 52%, color-mix(in oklab, var(--commerce-signal) 10%, transparent), transparent 24%),
+      radial-gradient(circle at 12% 12%, color-mix(in oklab, var(--commerce-ink) 5%, transparent), transparent 28%),
+      linear-gradient(135deg, color-mix(in oklab, var(--commerce-ink) 3%, transparent), transparent 55%);
   }
   .hero-console-glow {
-    background: radial-gradient(circle, hsl(var(--accent) / 0.18), transparent 68%);
+    background: radial-gradient(circle, color-mix(in oklab, var(--commerce-signal) 22%, transparent), transparent 68%);
     animation: hero-glow 7s ease-in-out infinite;
   }
   .hero-console {
@@ -518,18 +484,18 @@
   }
   .hero-console:hover > .relative {
     transform: perspective(1100px) rotateY(-2deg) rotateX(0deg) translateY(-5px);
-    box-shadow: 0 28px 80px hsl(var(--foreground) / 0.18);
+    box-shadow: 0 28px 80px color-mix(in oklab, var(--commerce-ink) 18%, transparent);
   }
   .dark .network-stage {
-    background-color: hsl(var(--foreground) / 0.16);
+    background-color: color-mix(in oklab, var(--commerce-ink) 14%, transparent);
     background:
-      radial-gradient(circle at 50% 52%, hsl(var(--accent) / 0.16), transparent 24%),
-      radial-gradient(circle at 90% 10%, hsl(var(--accent) / 0.07), transparent 30%),
-      linear-gradient(135deg, hsl(var(--foreground) / 0.06), transparent 60%);
+      radial-gradient(circle at 50% 52%, color-mix(in oklab, var(--commerce-signal) 18%, transparent), transparent 24%),
+      radial-gradient(circle at 90% 10%, color-mix(in oklab, var(--commerce-signal) 8%, transparent), transparent 30%),
+      linear-gradient(135deg, color-mix(in oklab, var(--commerce-ink) 5%, transparent), transparent 60%);
   }
   .network-lines path {
     fill: none;
-    stroke: hsl(var(--accent) / 0.62);
+    stroke: color-mix(in oklab, var(--commerce-signal) 70%, transparent);
     stroke-width: 1.2;
     stroke-dasharray: 7 10;
     animation: network-dash 7s linear infinite;
@@ -562,8 +528,8 @@
     width: 5px;
     height: 5px;
     border-radius: 999px;
-    background: hsl(var(--accent));
-    box-shadow: 0 0 16px hsl(var(--accent) / 0.9);
+    background: var(--commerce-signal);
+    box-shadow: 0 0 16px color-mix(in oklab, var(--commerce-signal) 90%, transparent);
     animation: particle-flight 6s ease-in-out infinite;
   }
   .particle-one {
