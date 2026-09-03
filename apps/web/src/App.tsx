@@ -130,6 +130,7 @@ import {
   type DebugStatus,
   fetchRazorpaySettings,
   saveRazorpaySettings,
+  deleteRazorpaySettings,
   testRazorpaySettings,
   disputeOrder,
   refundOrder,
@@ -3327,22 +3328,37 @@ function Settings() {
 
 function PaymentGatewaySection() {
   const { toast } = useToast();
+  const queryClient = useQueryClient();
   const { data: rp, isLoading } = useQuery<RazorpaySettings>({
     queryKey: ['razorpay-settings'],
     queryFn: fetchRazorpaySettings,
     staleTime: 60_000,
   });
 
+  const [mode, setMode] = useState<'test' | 'live'>('test');
   const [keyId, setKeyId] = useState('');
   const [keySecret, setKeySecret] = useState('');
   const [webhookSecret, setWebhookSecret] = useState('');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [testing, setTesting] = useState(false);
   const [testState, setTestState] = useState<'idle' | 'pass' | 'fail'>('idle');
   const [testMessage, setTestMessage] = useState<string | null>(null);
   const [showSecrets, setShowSecrets] = useState(false);
+  const [copiedWebhook, setCopiedWebhook] = useState(false);
 
   const configured = rp?.configured ?? false;
+
+  // Sync mode with the server's reported mode when it loads.
+  useEffect(() => {
+    if (rp?.mode === 'test' || rp?.mode === 'live') setMode(rp.mode);
+  }, [rp?.mode]);
+
+  // Resolve the API base URL for the webhook endpoint the merchant pastes into Razorpay.
+  const webhookUrl =
+    typeof window !== 'undefined'
+      ? `${window.location.origin.replace(/\/$/, '')}/api/checkout/webhook`
+      : '/api/checkout/webhook';
 
   const handleSave = async () => {
     if (!keyId.trim() || !keySecret.trim() || !webhookSecret.trim()) {
@@ -3353,11 +3369,12 @@ function PaymentGatewaySection() {
       });
       return;
     }
-    if (!keyId.startsWith('rzp_test_')) {
+    const expectedPrefix = mode === 'live' ? 'rzp_live_' : 'rzp_test_';
+    if (!keyId.startsWith(expectedPrefix)) {
       toast({
         variant: 'destructive',
         title: 'Wrong key type',
-        description: 'Only Razorpay test-mode keys (rzp_test_…) are accepted here.',
+        description: `Selected ${mode} mode — key ID must start with ${expectedPrefix}.`,
       });
       return;
     }
@@ -3366,6 +3383,7 @@ function PaymentGatewaySection() {
     setTestMessage(null);
     try {
       const res = await saveRazorpaySettings({
+        mode,
         keyId: keyId.trim(),
         keySecret: keySecret.trim(),
         webhookSecret: webhookSecret.trim(),
@@ -3374,7 +3392,8 @@ function PaymentGatewaySection() {
       setKeySecret('');
       setWebhookSecret('');
       setShowSecrets(false);
-      setKeyId(res.keyId);
+      setKeyId(res.keyIdMasked);
+      await queryClient.invalidateQueries({ queryKey: ['razorpay-settings'] });
       toast({
         title: 'Credentials saved',
         description: 'Razorpay keys are encrypted at rest and ready to use.',
@@ -3432,6 +3451,56 @@ function PaymentGatewaySection() {
     }
   };
 
+  const handleDelete = async () => {
+    if (!window.confirm('Disconnect Razorpay? Checkout will fail until you add new credentials.')) {
+      return;
+    }
+    setDeleting(true);
+    try {
+      const res = await deleteRazorpaySettings();
+      setKeyId('');
+      setKeySecret('');
+      setWebhookSecret('');
+      setShowSecrets(false);
+      setTestState('idle');
+      setTestMessage(null);
+      await queryClient.invalidateQueries({ queryKey: ['razorpay-settings'] });
+      toast({
+        title: 'Razorpay disconnected',
+        description: res.envFallbackAvailable
+          ? 'Cleared stored keys. Falling back to environment credentials.'
+          : 'Cleared stored keys. No fallback configured — checkout will fail.',
+      });
+    } catch (err) {
+      console.error('Delete Razorpay credentials failed:', err);
+      const message =
+        err instanceof ApiError
+          ? err.message
+          : "Couldn't clear credentials. Check your connection and try again.";
+      toast({
+        variant: 'destructive',
+        title: "Couldn't disconnect",
+        description: message,
+      });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleCopyWebhook = async () => {
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopiedWebhook(true);
+      setTimeout(() => setCopiedWebhook(false), 1500);
+    } catch {
+      toast({
+        variant: 'destructive',
+        title: 'Copy failed',
+        description: 'Copy this URL manually: ' + webhookUrl,
+      });
+    }
+  };
+
   return (
     <div
       id="payment-gateway"
@@ -3446,29 +3515,61 @@ function PaymentGatewaySection() {
           <div className="flex items-center justify-between">
             <h3 className="font-display text-xl font-bold">Payment gateway</h3>
             {configured ? (
-              <span className="flex items-center gap-2 rounded-full border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-3 py-1.5 font-mono-ui text-[10px] text-foreground">
+              <span
+                className="flex items-center gap-2 rounded-full border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-3 py-1.5 font-mono-ui text-[10px] text-foreground"
+                data-testid="razorpay-status-connected"
+              >
                 <span className="h-1.5 w-1.5 rounded-full bg-[var(--commerce-signal)]" /> connected
+                {rp?.mode ? ` · ${rp.mode} mode` : ''}
+                {rp?.keyIdMasked ? ` · ${rp.keyIdMasked}` : ''}
               </span>
             ) : (
-              <span className="flex items-center gap-2 rounded-full border border-warning/40 bg-warning/5 px-3 py-1.5 font-mono-ui text-[10px] text-warning">
-                <span className="h-1.5 w-1.5 rounded-full bg-warning" /> not configured
+              <span
+                className="flex items-center gap-2 rounded-full border border-warning/40 bg-warning/5 px-3 py-1.5 font-mono-ui text-[10px] text-warning"
+                data-testid="razorpay-status-not-configured"
+              >
+                <span className="h-1.5 w-1.5 rounded-full bg-warning" /> not configured — checkout
+                will fail
               </span>
             )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Connect your Razorpay test keys so checkout can open a real payment modal. Secrets are
-            encrypted at rest.
+            Connect your Razorpay keys so checkout can open a real payment modal. Secrets are
+            encrypted at rest. Env vars are only used as a fallback when nothing is stored here.
           </p>
 
           <div className="mt-7 space-y-5">
+            {/* Mode toggle */}
+            <div className="flex items-center justify-between border-b border-foreground/10 pb-4">
+              <span className="text-sm">Mode</span>
+              <div className="flex rounded-full border border-foreground/15 p-0.5">
+                {(['test', 'live'] as const).map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => setMode(m)}
+                    className={cn(
+                      'rounded-full px-3 py-1 font-mono-ui text-[10px] uppercase tracking-[.12em]',
+                      mode === m
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:text-foreground',
+                    )}
+                    data-testid={`button-razorpay-mode-${m}`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             <label className="block text-xs font-semibold">
               Razorpay key ID
               <input
                 value={keyId}
                 onChange={(e) => setKeyId(e.target.value)}
-                placeholder="rzp_test_…"
+                placeholder={mode === 'live' ? 'rzp_live_…' : 'rzp_test_…'}
                 className="mt-2 h-10 w-full rounded-lg border border-input bg-background px-3 font-mono-ui text-xs outline-none focus:border-[var(--commerce-signal)]"
                 data-testid="input-razorpay-key-id"
+                autoComplete="off"
               />
             </label>
 
@@ -3544,6 +3645,23 @@ function PaymentGatewaySection() {
             )}
 
             <div className="flex flex-wrap items-center justify-end gap-2">
+              {configured && (
+                <Button
+                  onClick={handleDelete}
+                  disabled={deleting}
+                  variant="outline"
+                  className="h-10 rounded-lg border-destructive/40 text-destructive hover:bg-destructive/10"
+                  data-testid="button-razorpay-delete"
+                >
+                  {deleting ? (
+                    <>
+                      <Loader2 size={14} className="mr-2 animate-spin" /> Disconnecting…
+                    </>
+                  ) : (
+                    'Disconnect'
+                  )}
+                </Button>
+              )}
               <Button
                 onClick={handleTest}
                 disabled={testing || !configured}
@@ -3574,8 +3692,30 @@ function PaymentGatewaySection() {
                 )}
               </Button>
             </div>
+
+            <div className="rounded-lg border border-foreground/10 bg-muted/30 px-4 py-3 text-xs text-muted-foreground">
+              <div className="font-mono-ui text-[9px] uppercase tracking-[.12em]">
+                Webhook URL · paste into your Razorpay dashboard
+              </div>
+              <div className="mt-2 flex items-center gap-2">
+                <code className="flex-1 truncate rounded border border-foreground/10 bg-background px-2 py-1.5 font-mono-ui text-[11px]">
+                  {webhookUrl}
+                </code>
+                <Button
+                  onClick={handleCopyWebhook}
+                  variant="outline"
+                  size="sm"
+                  className="h-7 rounded-md px-2"
+                  data-testid="button-copy-webhook-url"
+                >
+                  {copiedWebhook ? <Check size={12} /> : <Copy size={12} />}
+                </Button>
+              </div>
+            </div>
+
             <p className="font-mono-ui text-[9px] uppercase tracking-[.12em] text-muted-foreground">
-              Test mode only · no live keys
+              Stored keys override env vars. Env vars are only a fallback for the shared demo
+              workspace.
             </p>
             {isLoading && null}
           </div>
@@ -4067,6 +4207,7 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
     setUpsellState({ busy: false, result: null, error: null });
     setDismissedSuggestions(new Set());
     setElapsed(null);
+    setPrompt('');
     const start = Date.now();
     const parsedCap = parseFloat(maxSpend.replace(/[^0-9.]/g, ''));
     const capArg = Number.isFinite(parsedCap) && parsedCap > 0 ? parsedCap : undefined;
@@ -4296,8 +4437,9 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
                         </>
                       ) : (
                         <>
-                          No product in the catalog matched all your constraints. Try broadening the
-                          search.
+                          <strong>No matching product found.</strong> I couldn’t find anything in the
+                          catalog that fits that request — try describing it differently (e.g. add the
+                          category, a price ceiling, or a feature you want).
                         </>
                       )}
                     </motion.div>

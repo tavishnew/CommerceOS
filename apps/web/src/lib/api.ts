@@ -503,6 +503,7 @@ export interface TraceStep {
 }
 
 export interface BuyerQueryResult {
+  matched: boolean;
   recommendedProduct: Product | null;
   confidence: number;
   policyResult: string;
@@ -694,9 +695,11 @@ export function toggleDebugFailure(enabled: boolean): Promise<DebugStatus> {
 // ── Razorpay settings (merchant-configured credentials) ──────────────────
 
 export interface RazorpaySettings {
-  keyId: string | null;
   configured: boolean;
-  source: 'merchant_row' | 'env_fallback' | 'none';
+  mode: 'test' | 'live' | null;
+  keyIdMasked: string | null;
+  source: 'merchant_row' | 'none';
+  envFallbackAvailable: boolean;
   updatedAt: string | null;
 }
 
@@ -705,14 +708,22 @@ export function fetchRazorpaySettings(): Promise<RazorpaySettings> {
 }
 
 export function saveRazorpaySettings(data: {
+  mode: 'test' | 'live';
   keyId: string;
   keySecret: string;
   webhookSecret: string;
-}): Promise<{ keyId: string; configured: boolean }> {
-  return apiFetch<{ keyId: string; configured: boolean }>('/api/settings/razorpay', {
-    method: 'PUT',
-    body: JSON.stringify(data),
-  });
+}): Promise<{ configured: boolean; mode: 'test' | 'live'; keyIdMasked: string }> {
+  return apiFetch<{ configured: boolean; mode: 'test' | 'live'; keyIdMasked: string }>(
+    '/api/settings/razorpay',
+    { method: 'PUT', body: JSON.stringify(data) },
+  );
+}
+
+export function deleteRazorpaySettings(): Promise<{ configured: boolean; envFallbackAvailable: boolean }> {
+  return apiFetch<{ configured: boolean; envFallbackAvailable: boolean }>(
+    '/api/settings/razorpay',
+    { method: 'DELETE' },
+  );
 }
 
 export interface RazorpayTestResult {

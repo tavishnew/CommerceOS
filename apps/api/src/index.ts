@@ -1472,10 +1472,11 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
     console.error('checkout/start: failed to resolve credentials:', err);
   }
   if (!creds) {
-    res.status(409).json({
+    res.status(402).json({
       error: {
         code: 'RAZORPAY_NOT_CONFIGURED',
-        message: 'No Razorpay credentials configured. Add them in Settings → Payment gateway.',
+        message:
+          'Merchant has not connected payments yet. Add Razorpay keys in Settings → Payment gateway.',
       },
     });
     return;
@@ -2043,7 +2044,15 @@ app.put('/api/settings', async (req, res) => {
 
 // ── Razorpay settings (per-merchant, encrypted at rest) ───────────────────
 
-// GET /api/settings/razorpay — return keyId + configured flag, never the secret
+// Mask a Razorpay key id so the client never sees the full secret. The first
+// 8 chars (the `rzp_test_` / `rzp_live_` prefix) plus the last 4 are kept;
+// the middle is replaced with `****`.
+function maskRazorpayKeyId(keyId: string): string {
+  if (keyId.length <= 12) return keyId.slice(0, 4) + '****';
+  return keyId.slice(0, 8) + '****' + keyId.slice(-4);
+}
+
+// GET /api/settings/razorpay — return masked keyId + configured flag, never the secret
 app.get('/api/settings/razorpay', async (_req, res) => {
   try {
     const { rows } = await pool.query<MerchantCredentialsRow>(
@@ -2052,14 +2061,25 @@ app.get('/api/settings/razorpay', async (_req, res) => {
       ['default'],
     );
     if (rows.length === 0) {
-      res.json({ keyId: null, configured: false, source: 'none', updatedAt: null });
+      const envId = process.env.RAZORPAY_KEY_ID;
+      res.json({
+        configured: false,
+        mode: null,
+        keyIdMasked: null,
+        source: 'none',
+        envFallbackAvailable: !!(envId && process.env.RAZORPAY_KEY_SECRET),
+        updatedAt: null,
+      });
       return;
     }
     const r = rows[0];
+    const mode: 'test' | 'live' = r.razorpay_key_id.startsWith('rzp_live_') ? 'live' : 'test';
     res.json({
-      keyId: r.razorpay_key_id,
       configured: true,
+      mode,
+      keyIdMasked: maskRazorpayKeyId(r.razorpay_key_id),
       source: 'merchant_row',
+      envFallbackAvailable: false,
       updatedAt: r.updated_at,
     });
   } catch (err) {
@@ -2072,8 +2092,14 @@ app.get('/api/settings/razorpay', async (_req, res) => {
 
 // PUT /api/settings/razorpay — encrypt and upsert credentials
 app.put('/api/settings/razorpay', async (req, res) => {
-  const { keyId, keySecret, webhookSecret } = req.body ?? {};
+  const { mode, keyId, keySecret, webhookSecret } = req.body ?? {};
 
+  if (mode !== 'test' && mode !== 'live') {
+    res
+      .status(400)
+      .json({ error: { code: 'INVALID_REQUEST', message: 'mode must be "test" or "live".' } });
+    return;
+  }
   if (!keyId || typeof keyId !== 'string') {
     res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'keyId is required.' } });
     return;
@@ -2088,11 +2114,12 @@ app.put('/api/settings/razorpay', async (req, res) => {
       .json({ error: { code: 'INVALID_REQUEST', message: 'webhookSecret is required.' } });
     return;
   }
-  if (!keyId.startsWith('rzp_test_')) {
+  const expectedPrefix = mode === 'live' ? 'rzp_live_' : 'rzp_test_';
+  if (!keyId.startsWith(expectedPrefix)) {
     res.status(400).json({
       error: {
         code: 'INVALID_KEY_PREFIX',
-        message: 'Key ID must start with rzp_test_ — only test-mode keys are accepted.',
+        message: `Key ID must start with ${expectedPrefix} to match mode "${mode}".`,
       },
     });
     return;
@@ -2112,13 +2139,28 @@ app.put('/api/settings/razorpay', async (req, res) => {
          updated_at = NOW()`,
       [keyId, encSecret, encWebhook],
     );
-    res.json({ keyId, configured: true });
+    res.json({ configured: true, mode, keyIdMasked: maskRazorpayKeyId(keyId) });
   } catch (err) {
     console.error('PUT /api/settings/razorpay error:', err);
     const msg = err instanceof Error ? err.message : String(err);
     res
       .status(500)
       .json({ error: { code: 'INTERNAL_ERROR', message: `Failed to save credentials: ${msg}` } });
+  }
+});
+
+// DELETE /api/settings/razorpay — clear stored creds, fall back to env (if any)
+app.delete('/api/settings/razorpay', async (_req, res) => {
+  try {
+    await pool.query(`DELETE FROM merchant_credentials WHERE merchant_id = 'default'`);
+    const envId = process.env.RAZORPAY_KEY_ID;
+    const envFallbackAvailable = !!(envId && process.env.RAZORPAY_KEY_SECRET);
+    res.json({ configured: false, envFallbackAvailable });
+  } catch (err) {
+    console.error('DELETE /api/settings/razorpay error:', err);
+    res
+      .status(500)
+      .json({ error: { code: 'INTERNAL_ERROR', message: 'Failed to clear Razorpay settings.' } });
   }
 });
 
@@ -2697,8 +2739,8 @@ function scoreProduct(
     }
   }
 
-  // Stock bonus
-  if (product.inStock) score += 0.1;
+  // Stock bonus — only counts when there is already a real match.
+  if (matches > 0 && product.inStock) score += 0.1;
 
   return { score: Math.min(score, 1), matches };
 }
@@ -2898,19 +2940,23 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
     timestamp: now(),
   });
 
-  // Step 3: Score candidates
+  // Step 3: Score candidates.
+  // Confidence floor: at least one real text or price hit, AND a minimum
+  // score above noise. This prevents nonsense queries (e.g. "flying pizza
+  // dispenser") from returning an unrelated in-stock item as the top match.
+  const MIN_CONFIDENCE_SCORE = 0.15;
   const scored = products.map((p) => ({
     product: p,
     ...scoreProduct(p, constraints, keywords),
   }));
   scored.sort((a, b) => b.score - a.score);
-  const shortlisted = scored.filter((s) => s.score > 0);
+  const shortlisted = scored.filter((s) => s.matches > 0 && s.score >= MIN_CONFIDENCE_SCORE);
   const topMatch = shortlisted[0] ?? null;
 
   emit({
     label: 'Candidates scored',
     detail: topMatch
-      ? `${shortlisted.length} match${shortlisted.length === 1 ? '' : 'es'} above confidence threshold`
+      ? `${shortlisted.length} match${shortlisted.length === 1 ? '' : 'es'} above confidence threshold (≥${MIN_CONFIDENCE_SCORE})`
       : 'No matches found above threshold',
     timestamp: now(),
   });
@@ -3026,6 +3072,7 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
   }
 
   const result = {
+    matched: recommended != null,
     recommendedProduct: recommended,
     confidence: topMatch?.score ?? 0,
     policyResult,
