@@ -1,56 +1,91 @@
 import { type ReactNode, useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
-import {
-  Activity,
-  ArrowDownRight,
-  ArrowRight,
-  ArrowUpRight,
-  Bot,
-  Box,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Code2,
-  Command,
-  Copy,
-  CreditCard,
-  FileKey2,
-  FileSearch,
-  FileText,
-  Filter,
-  Globe2,
-  KeyRound,
-  LayoutGrid,
-  LockKeyhole,
-  Menu,
-  Moon,
-  MoreHorizontal,
-  Package,
-  PanelLeftClose,
-  PanelLeftOpen,
-  Pencil,
-  Plus,
-  Radio,
-  RefreshCw,
-  Search,
-  Send,
-  Settings as SettingsIcon,
-  ShieldCheck,
-  ShoppingBag,
-  SlidersHorizontal,
-  Sparkles,
-  Sun,
-  Tags,
-  Terminal,
-  Trash2,
-  TrendingUp,
-  UserRound,
-  Users,
-  X,
-  Zap,
-  Loader2,
-  AlertTriangle,
-} from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import * as HI from '@hugeicons/core-free-icons';
+import type { CSSProperties } from 'react';
+
+type Icon = typeof HI.Search01Icon;
+
+// Build a lucide-style component (<Foo size={n} className=... style=... />)
+// around a Hugeicons icon. We only forward props we know are safe — the
+// Hugeicons `strokeWidth` prop is number-only, so we don't spread arbitrary
+// SVG attributes (lucide-react's components take a wider set, but the
+// App.tsx call sites use only size/className/style/strokeWidth).
+function compat(Icon: Icon) {
+  return function LucideCompat({
+    size,
+    className,
+    style,
+    strokeWidth,
+  }: {
+    size?: number;
+    className?: string;
+    style?: CSSProperties;
+    strokeWidth?: number;
+  }) {
+    return (
+      <HugeiconsIcon
+        icon={Icon}
+        size={size}
+        className={className}
+        style={style}
+        strokeWidth={strokeWidth}
+      />
+    );
+  };
+}
+
+const Activity = compat(HI.Activity01Icon);
+const ArrowDownRight = compat(HI.ArrowDownRight01Icon);
+const ArrowRight = compat(HI.ArrowRight01Icon);
+const ArrowUpRight = compat(HI.ArrowUpRight01Icon);
+const Bot = compat(HI.BotIcon);
+const Box = compat(HI.BoxIcon);
+const Check = compat(HI.CheckIcon);
+const ChevronDown = compat(HI.ChevronDownIcon);
+const ChevronRight = compat(HI.ChevronRightIcon);
+const Code2 = compat(HI.CodeIcon);
+const Command = compat(HI.CommandLineIcon);
+const Copy = compat(HI.CopyIcon);
+const CreditCard = compat(HI.CreditCardIcon);
+const FileKey2 = compat(HI.File02Icon);
+const FileSearch = compat(HI.FileSearchIcon);
+const FileText = compat(HI.File01Icon);
+const Filter = compat(HI.FilterIcon);
+const Globe2 = compat(HI.Globe02Icon);
+const KeyRound = compat(HI.KeyRoundIcon);
+const LayoutGrid = compat(HI.GridIcon);
+const LockKeyhole = compat(HI.LockKeyholeIcon);
+const Menu = compat(HI.Menu01Icon);
+const Moon = compat(HI.Moon01Icon);
+const MoreHorizontal = compat(HI.MoreHorizontalIcon);
+const Package = compat(HI.Package01Icon);
+const PanelLeftClose = compat(HI.PanelLeftCloseIcon);
+const PanelLeftOpen = compat(HI.PanelLeftOpenIcon);
+const Pencil = compat(HI.EditIcon);
+const Plus = compat(HI.Add01Icon);
+const Radio = compat(HI.RadioIcon);
+const RefreshCw = compat(HI.Refresh01Icon);
+const Search = compat(HI.Search01Icon);
+const Send = compat(HI.SentIcon);
+// Renamed: `Settings` collides with the Settings React component below. The
+// lucide alias was `Settings as SettingsIcon`; we keep the same local name.
+const SettingsIcon = compat(HI.Settings01Icon);
+const ShieldCheck = compat(HI.Shield01Icon);
+const ShoppingBag = compat(HI.ShoppingBag01Icon);
+const SlidersHorizontal = compat(HI.SlidersHorizontalIcon);
+const Sparkles = compat(HI.SparklesIcon);
+const Sun = compat(HI.Sun01Icon);
+const Tags = compat(HI.TagsIcon);
+const Terminal = compat(HI.TerminalIcon);
+const Trash2 = compat(HI.Delete01Icon);
+const TrendingUp = compat(HI.TrendingUpIcon);
+const UserRound = compat(HI.UserRoundIcon);
+const Users = compat(HI.UsersIcon);
+const X = compat(HI.Cancel01Icon);
+const Zap = compat(HI.ZapIcon);
+const Loader2 = compat(HI.Loading01Icon);
+const AlertTriangle = compat(HI.TriangleAlertIcon);
 import { Link, Route, Switch, useLocation } from 'wouter';
 import {
   QueryClient,

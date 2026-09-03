@@ -2,7 +2,12 @@ import * as React from 'react';
 import * as ToastPrimitives from '@radix-ui/react-toast';
 import { cn } from '@/lib/utils';
 import { cva, type VariantProps } from 'class-variance-authority';
-import { X } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Cancel01Icon } from '@hugeicons/core-free-icons';
+
+const X = (p: { className?: string }) => (
+  <HugeiconsIcon icon={Cancel01Icon} className={p.className} />
+);
 
 const ToastProvider = ToastPrimitives.Provider;
 

@@ -3881,9 +3881,12 @@ async function start() {
   await ensureInventoryReservationsTable(pool);
   console.log('✅ Inventory reservations table ready');
 
-  // Demo workspace seed — runs only when DEMO_ACCOUNT_EMAIL is configured
-  // (default tavish350@gmail.com). Idempotent: re-runs are a no-op once
-  // the demo buyer workspace has any orders.
+  // Demo workspace seed — seeds rows into the demo BUYER workspace
+  // (DEMO_BUYER_WORKSPACE_ID) and demo MERCHANT workspace
+  // (DEMO_MERCHANT_WORKSPACE) only. Non-demo workspaces created via
+  // /api/bootstrap receive only an empty buyer_sessions row, nothing
+  // else. Idempotent: re-runs are a no-op once the demo buyer workspace
+  // has any orders.
   await seedDemoDataIfEmpty(pool);
   console.log('✅ Demo workspace seeded (or already populated)');
 
