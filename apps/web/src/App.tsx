@@ -257,14 +257,24 @@ function ThemeToggle({ theme, onToggle }: { theme: Theme; onToggle: () => void }
   );
 }
 
-function Pill({ children, signal = false }: { children: ReactNode; signal?: boolean }) {
+function Pill({
+  children,
+  signal = false,
+  tone = 'muted',
+}: {
+  children: ReactNode;
+  signal?: boolean;
+  tone?: 'muted' | 'ink';
+}) {
   return (
     <span
       className={cn(
-        'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono-ui text-[10px] uppercase tracking-[.12em]',
+        'inline-flex select-none items-center gap-1.5 rounded-full border px-2.5 py-1 font-mono-ui text-[10px] uppercase tracking-[.12em]',
         signal
           ? 'border-[var(--commerce-signal)]/35 bg-[var(--commerce-signal)]/10 text-[var(--commerce-signal-strong)]'
-          : 'border-foreground/15 bg-foreground/[.04] text-muted-foreground',
+          : tone === 'ink'
+            ? 'border-foreground/15 bg-foreground/[.04] text-foreground'
+            : 'border-foreground/15 bg-foreground/[.04] text-muted-foreground',
       )}
     >
       {children}
@@ -370,7 +380,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
                 </span>
               </h1>
               <p className="mt-8 max-w-[525px] text-[17px] leading-7 text-muted-foreground sm:text-[19px]">
-                The operating surface for a new kind of marketplace — where buyer and seller agents
+                The operating surface for a new kind of marketplace where buyer and seller agents
                 discover, decide, transact, and explain themselves.
               </p>
               <div className="mt-9 flex flex-wrap items-center gap-3">
@@ -614,13 +624,27 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
                   },
                 ] as Array<{ num: string; title: string; text: string; Icon: typeof Search }>
               ).map(({ num, title, text, Icon }) => (
-                <div key={num} className="bg-background p-6 sm:p-7">
-                  <span className="font-mono-ui text-[10px] text-foreground">
+                <div
+                  key={num}
+                  className="group relative bg-background p-6 transition-all duration-300 ease-out hover:-translate-y-1 hover:bg-foreground/[.02] hover:shadow-[0_18px_40px_-20px_rgba(23,26,35,.25)] sm:p-7"
+                >
+                  <span className="font-mono-ui text-[10px] text-foreground transition-colors duration-300 group-hover:text-[var(--commerce-signal)]">
                     {num}
                   </span>
-                  <Icon className="mt-12 text-muted-foreground" size={19} />
-                  <h3 className="mt-5 font-display text-2xl font-bold">{title}</h3>
-                  <p className="mt-2 text-sm leading-5 text-muted-foreground">{text}</p>
+                  <Icon
+                    className="mt-12 text-muted-foreground transition-all duration-300 group-hover:-translate-y-0.5 group-hover:text-foreground"
+                    size={19}
+                  />
+                  <h3 className="mt-5 font-display text-2xl font-bold transition-colors duration-300 group-hover:text-[var(--commerce-signal)]">
+                    {title}
+                  </h3>
+                  <p className="mt-2 text-sm leading-5 text-muted-foreground transition-colors duration-300 group-hover:text-foreground/70">
+                    {text}
+                  </p>
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-x-0 bottom-0 h-px origin-left scale-x-0 bg-gradient-to-r from-transparent via-[var(--commerce-signal)] to-transparent transition-transform duration-500 ease-out group-hover:scale-x-100"
+                  />
                 </div>
               ))}
             </div>
@@ -640,9 +664,6 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
                 <span className="text-muted-foreground">See every signal.</span>
               </h2>
             </div>
-            <p className="max-w-[280px] text-sm leading-6 text-muted-foreground">
-              One console for your catalog, orders, agent activity, and the decisions in between.
-            </p>
           </div>
           <div className="mt-14 grid gap-4 lg:grid-cols-[1.35fr_.65fr]">
             <div className="relative min-h-[370px] overflow-hidden rounded-3xl border border-[var(--commerce-border-strong)] bg-[var(--commerce-surface-sunken)] p-7 text-[var(--commerce-ink)]">
@@ -712,7 +733,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
         >
           <div className="mx-auto grid max-w-[1240px] gap-14 px-5 py-20 sm:px-8 lg:grid-cols-[1fr_.9fr] lg:px-10 lg:py-28">
             <div>
-              <Pill>03 / Trust layer</Pill>
+              <Pill tone="ink">03 / Trust layer</Pill>
               <h2 className="mt-6 max-w-[600px] font-display text-5xl font-bold leading-[.9] tracking-[-.06em] sm:text-7xl">
                 Every "why" has a shape.
               </h2>
@@ -789,7 +810,7 @@ function Auth({
             <span className="text-muted-foreground">vantage point.</span>
           </h1>
           <p className="mt-7 max-w-[360px] text-sm leading-6 text-muted-foreground">
-            Your role shapes the console. Switch sides anytime — the protocol stays shared.
+            Your role shapes the console. Switch sides anytime. The protocol stays shared.
           </p>
           <div className="mt-12 flex gap-3 font-mono-ui text-[10px] text-muted-foreground">
             <span>01 / role</span>
@@ -1054,13 +1075,6 @@ function Topbar({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <div className="hidden items-center gap-2 rounded-full border border-foreground/10 bg-foreground/[.03] px-3 py-2 font-mono-ui text-[10px] text-muted-foreground md:flex">
-          <Search size={13} />
-          <span>Search</span>
-          <kbd className="ml-3 rounded border border-foreground/15 px-1.5 py-0.5 text-[9px]">
-            ⌘ K
-          </kbd>
-        </div>
         <button
           onClick={() => setLocation('/auth')}
           className="hidden h-9 items-center gap-2 rounded-full px-3 text-xs font-semibold text-muted-foreground hover:bg-foreground/[.05] hover:text-foreground sm:flex"
@@ -1140,7 +1154,7 @@ function MetricCard({
   return (
     <div
       className={cn(
-        'rounded-2xl border p-5',
+        'select-none rounded-2xl border p-5',
         signal
           ? 'border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10'
           : 'border-foreground/10 bg-card',
@@ -1178,6 +1192,7 @@ function MetricCard({
 
 function MerchantOverview() {
   const [, setLocation] = useLocation();
+  const { isDemo, email } = useWorkspace();
   const { data: rp } = useQuery<RazorpaySettings>({
     queryKey: ['razorpay-settings'],
     queryFn: fetchRazorpaySettings,
@@ -1214,8 +1229,12 @@ function MerchantOverview() {
       )}
       <PageHeading
         eyebrow="Overview / network health"
-        title="Good afternoon, Alex."
-        description="Your commerce surface is quiet, healthy, and listening."
+        title={buildGreeting(email)}
+        description={
+          isDemo
+            ? 'Your commerce surface is quiet, healthy, and listening.'
+            : 'Catalog, orders, and activity will appear here once your buyer agents start running.'
+        }
         action={
           <ButtonArrow
             testId="button-view-catalog"
@@ -1225,58 +1244,142 @@ function MerchantOverview() {
           </ButtonArrow>
         }
       />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <p className="col-span-full -mb-1 text-right text-[10px] uppercase tracking-[.12em] text-muted-foreground">
-          Sample data — not live
-        </p>
-        <MetricCard
-          label="Gross volume"
-          value="$18,426"
-          delta="+12.8% / 30d"
-          icon={TrendingUp}
-          signal
-        />
-        <MetricCard label="Agent sessions" value="1,284" delta="+18.4%" icon={Users} />
-        <MetricCard label="Conversion" value="6.7%" delta="+1.2 pts" icon={ArrowUpRight} />
-        <MetricCard label="Avg. decision" value="42ms" delta="-8ms" icon={Zap} />
-      </div>
-      <div className="grid gap-4 xl:grid-cols-[1.35fr_.65fr]">
-        <ActivityPanel />
-        <div className="rounded-2xl border border-foreground/10 bg-card p-5">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
-                Decision mix
-              </p>
-              <h3 className="mt-2 font-display text-xl font-bold">This month · sample data</h3>
-            </div>
-            <MoreHorizontal size={17} className="text-muted-foreground" />
+      {isDemo ? (
+        <>
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+            <p className="col-span-full -mb-1 select-none text-right text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+              Sample data — not live
+            </p>
+            <MetricCard
+              label="Gross volume"
+              value="$18,426"
+              delta="+12.8% / 30d"
+              icon={TrendingUp}
+              signal
+            />
+            <MetricCard label="Agent sessions" value="1,284" delta="+18.4%" icon={Users} />
+            <MetricCard label="Conversion" value="6.7%" delta="+1.2 pts" icon={ArrowUpRight} />
+            <MetricCard label="Avg. decision" value="42ms" delta="-8ms" icon={Zap} />
           </div>
-          <div className="mt-8 space-y-5">
-            {[
-              ['Auto-approved', '72%', 'bg-[var(--commerce-signal)]'],
-              ['Human review', '19%', 'bg-[var(--commerce-text-muted)]'],
-              ['Declined', '9%', 'bg-[var(--commerce-text-muted)]/55'],
-            ].map(([label, value, color]) => (
-              <div key={label}>
-                <div className="flex justify-between text-xs">
-                  <span>{label}</span>
-                  <span className="font-mono-ui text-muted-foreground">{value}</span>
+          <div className="grid gap-4 2xl:grid-cols-[1.35fr_.65fr]">
+            <ActivityPanel />
+            <div className="min-w-0 select-none rounded-2xl border border-foreground/10 bg-card p-5">
+              <div className="flex min-w-0 items-start justify-between gap-3">
+                <div className="min-w-0 select-none">
+                  <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                    Decision mix
+                  </p>
+                  <h3 className="mt-2 font-display text-xl font-bold">
+                    This month · sample data
+                  </h3>
                 </div>
-                <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
-                  <div className={cn('h-full rounded-full', color)} style={{ width: value }} />
-                </div>
+                <MoreHorizontal
+                  size={17}
+                  className="shrink-0 text-muted-foreground"
+                />
               </div>
-            ))}
+              <div className="mt-8 space-y-5">
+                {[
+                  ['Auto-approved', '72%', 'bg-[var(--commerce-signal)]'],
+                  ['Human review', '19%', 'bg-[var(--commerce-text-muted)]'],
+                  ['Declined', '9%', 'bg-[var(--commerce-text-muted)]/55'],
+                ].map(([label, value, color]) => (
+                  <div key={label} className="min-w-0 select-none">
+                    <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 text-xs">
+                      <span className="min-w-0 truncate">{label}</span>
+                      <span className="shrink-0 font-mono-ui text-muted-foreground">
+                        {value}
+                      </span>
+                    </div>
+                    <div className="mt-2 h-2 overflow-hidden rounded-full bg-muted">
+                      <div className={cn('h-full rounded-full', color)} style={{ width: value }} />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-9 select-none rounded-xl bg-muted/70 p-3 font-mono-ui text-[10px] leading-5 text-muted-foreground">
+                <span className="text-foreground">policy.guard</span> is holding 3 orders for a
+                human check.
+              </div>
+            </div>
           </div>
-          <div className="mt-9 rounded-xl bg-muted/70 p-3 font-mono-ui text-[10px] leading-5 text-muted-foreground">
-            <span className="text-foreground">policy.guard</span> is holding 3 orders for a human
-            check.
+        </>
+      ) : (
+        <div className="grid gap-4 2xl:grid-cols-[1.35fr_.65fr]">
+          <ActivityPanel />
+          <div className="min-w-0 rounded-2xl border border-foreground/10 bg-card p-5">
+            <div className="select-none">
+              <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                Next steps
+              </p>
+              <h3 className="mt-2 font-display text-xl font-bold">Set up your workspace</h3>
+            </div>
+            <ul className="mt-5 space-y-3 text-sm text-muted-foreground">
+              <li className="flex items-start gap-3">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-positive" />
+                <span>
+                  Add products in{' '}
+                  <a
+                    href="/merchant/catalog"
+                    className="text-foreground underline-offset-2 hover:underline"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setLocation('/merchant/catalog');
+                    }}
+                  >
+                    Catalog
+                  </a>
+                  .
+                </span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-positive" />
+                <span>
+                  Connect a payment gateway in{' '}
+                  <a
+                    href="/merchant/settings"
+                    className="text-foreground underline-offset-2 hover:underline"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      setLocation('/merchant/settings');
+                    }}
+                  >
+                    Settings
+                  </a>
+                  .
+                </span>
+              </li>
+              <li className="flex items-start gap-3">
+                <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-positive" />
+                <span>Activity from buyer agents will populate the panel on the left.</span>
+              </li>
+            </ul>
           </div>
         </div>
-      </div>
+      )}
     </div>
   );
+}
+
+/** Real greeting — never a hardcoded name. Falls back to "Welcome" if the
+ *  workspace hasn't resolved an email yet, so a brand-new local workspace
+ *  never sees a fake person. The hour-of-day band mirrors the visual
+ *  rhythm of the page (morning / afternoon / evening) but contains no
+ *  fabricated data. */
+function buildGreeting(email: string | null): string {
+  const h = new Date().getHours();
+  const part =
+    h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
+  if (!email) return `${part}.`;
+  const local = email.split('@')[0]?.replace(/[._-]+/g, ' ').trim();
+  if (!local) return `${part}.`;
+  // Title-case the local-part so "alex.smith" -> "Alex smith" reads cleanly
+  // without ever being more than what the user themselves typed.
+  const pretty = local
+    .split(/\s+/)
+    .map((w) => (w ? w[0].toUpperCase() + w.slice(1) : w))
+    .join(' ');
+  return `${part}, ${pretty}.`;
 }
 
 function PageHeading({
@@ -1896,7 +1999,7 @@ function OrderRow({
   const { toast } = useToast();
   const [disputing, setDisputing] = useState(false);
   const [refunding, setRefunding] = useState(false);
-  const formatAmount = (n: number) => `₹${n.toFixed(2)}`;
+  const formatAmount = (n: number | string) => `₹${Number(n).toFixed(2)}`;
   const formatTime = (iso: string) => {
     const d = new Date(iso);
     const now = new Date();
@@ -1928,15 +2031,24 @@ function OrderRow({
   };
 
   const handleRefund = async () => {
+    if (!order.workspace_id) {
+      console.error('refund aborted: order is missing workspace_id', { orderId: order.id });
+      toast({
+        variant: 'destructive',
+        title: "Can't refund",
+        description: 'Order is missing workspace context. Refresh and try again.',
+      });
+      return;
+    }
     if (
       !window.confirm(
-        `Refund ₹${order.amount.toFixed(2)} for order #${order.id}? This calls Razorpay immediately.`,
+        `Refund ₹${Number(order.amount).toFixed(2)} for order #${order.id}? This calls Razorpay immediately.`,
       )
     )
       return;
     setRefunding(true);
     try {
-      const res = await refundOrder(order.id, order.workspace_id ?? 'default');
+      const res = await refundOrder(order.id, order.workspace_id);
       toast({ title: 'Refund processed', description: `Razorpay refund ${res.refundId}.` });
       onAction();
     } catch (err) {
@@ -2152,6 +2264,15 @@ function MerchantOrderDetailDrawer({
 
   const submitDispute = async () => {
     if (!order) return;
+    if (!order.workspace_id) {
+      console.error('dispute aborted: order is missing workspace_id', { orderId: order.id });
+      toast({
+        variant: 'destructive',
+        title: "Can't dispute",
+        description: 'Order is missing workspace context. Refresh and try again.',
+      });
+      return;
+    }
     if (!reason.trim()) {
       toast({ variant: 'destructive', title: 'Reason required', description: 'Tell the buyer why.' });
       return;
@@ -2161,7 +2282,7 @@ function MerchantOrderDetailDrawer({
       await disputeOrder(
         order.id,
         reason.trim().slice(0, 500),
-        order.workspace_id ?? 'default',
+        order.workspace_id,
       );
       toast({ title: 'Dispute opened', description: `Order #${order.id} flagged.` });
       setReason('');
@@ -2177,9 +2298,18 @@ function MerchantOrderDetailDrawer({
 
   const submitRefund = async () => {
     if (!order) return;
+    if (!order.workspace_id) {
+      console.error('refund aborted: order is missing workspace_id', { orderId: order.id });
+      toast({
+        variant: 'destructive',
+        title: "Can't refund",
+        description: 'Order is missing workspace context. Refresh and try again.',
+      });
+      return;
+    }
     setAction('refund');
     try {
-      const res = await refundOrder(order.id, order.workspace_id ?? 'default');
+      const res = await refundOrder(order.id, order.workspace_id);
       toast({ title: 'Refund processed', description: `Razorpay refund ${res.refundId}.` });
       onAction();
       onClose();
@@ -4185,6 +4315,7 @@ function BuyerSettings() {
 function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
   const { toast } = useToast();
   const [prompt, setPrompt] = useState('');
+  const [submittedPrompt, setSubmittedPrompt] = useState('');
   const [maxSpend, setMaxSpend] = useState<string>('180');
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -4223,7 +4354,8 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
   if (isSettings) return <BuyerSettings />;
 
   const handleSubmit = async () => {
-    const trimmed = prompt.trim();
+    const submitted = prompt;
+    const trimmed = submitted.trim();
     if (!trimmed) {
       toast({
         variant: 'destructive',
@@ -4234,6 +4366,7 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
     }
     if (loading) return;
     setSubmitted(true);
+    setSubmittedPrompt(submitted);
     setLoading(true);
     setError(null);
     setTraceSteps([]);
@@ -4399,7 +4532,7 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
               {submitted && (
                 <>
                   <div className="ml-auto max-w-[350px] rounded-2xl rounded-tr-sm bg-foreground px-4 py-3 text-sm leading-6 text-background">
-                    {prompt}
+                    {submittedPrompt}
                   </div>
                   {loading && (
                     <motion.div

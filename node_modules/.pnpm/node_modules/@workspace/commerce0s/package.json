@@ -23,7 +23,6 @@
     "class-variance-authority": "catalog:",
     "clsx": "catalog:",
     "framer-motion": "catalog:",
-    "lucide-react": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "tailwind-merge": "catalog:",
@@ -33,5 +32,9 @@
     "vite": "catalog:",
     "wouter": "^3.3.5",
     "zod": "catalog:"
+  },
+  "dependencies": {
+    "@hugeicons/core-free-icons": "4.3.0",
+    "@hugeicons/react": "1.1.10"
   }
 }

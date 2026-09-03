@@ -62,17 +62,19 @@ export const DEMO_MERCHANT_WORKSPACE = DEMO_MERCHANT_WORKSPACE_ID;
  *  populated view. Skips silently when the workspace already has rows. */
 export async function seedDemoDataIfEmpty(pool: pg.Pool): Promise<void> {
   // Demo merchant workspace row in merchant_settings (so the merchant side
-  // sees a familiar dashboard on first load).
+  // sees a familiar dashboard on first load). After the 2026-09-03
+  // migration, the PK is `workspace_id`; we still populate the legacy
+  // `merchant_id` column for any read paths that still reference it.
   const { rowCount: mc } = await pool.query(
-    `SELECT 1 FROM merchant_settings WHERE merchant_id = $1`,
+    `SELECT 1 FROM merchant_settings WHERE workspace_id = $1`,
     [DEMO_MERCHANT_WORKSPACE],
   );
   if (!mc || mc === 0) {
     await pool.query(
-      `INSERT INTO merchant_settings (merchant_id, max_auto_approve, require_human_above_cap)
-       VALUES ($1, 180.00, TRUE)
-       ON CONFLICT (merchant_id) DO NOTHING`,
-      [DEMO_MERCHANT_WORKSPACE],
+      `INSERT INTO merchant_settings (merchant_id, workspace_id, max_auto_approve, require_human_above_cap)
+       VALUES ($1, $2, 180.00, TRUE)
+       ON CONFLICT (workspace_id) DO NOTHING`,
+      [DEMO_MERCHANT_WORKSPACE, DEMO_MERCHANT_WORKSPACE],
     );
   }
 

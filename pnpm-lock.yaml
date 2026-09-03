@@ -33,9 +33,6 @@ catalogs:
     framer-motion:
       specifier: 12.6.3
       version: 12.6.3
-    lucide-react:
-      specifier: 0.475.0
-      version: 0.475.0
     react:
       specifier: 19.0.0
       version: 19.0.0
@@ -120,6 +117,13 @@ importers:
         version: 4.1.11(@types/node@22.20.1)(vite@6.2.5(@types/node@22.20.1)(jiti@2.7.0)(lightningcss@1.29.2)(tsx@4.23.12))
 
   apps/web:
+    dependencies:
+      '@hugeicons/core-free-icons':
+        specifier: 4.3.0
+        version: 4.3.0
+      '@hugeicons/react':
+        specifier: 1.1.10
+        version: 1.1.10(react@19.0.0)
     devDependencies:
       '@radix-ui/react-dialog':
         specifier: ^1.1.7
@@ -160,9 +164,6 @@ importers:
       framer-motion:
         specifier: 'catalog:'
         version: 12.6.3(react-dom@19.0.0(react@19.0.0))(react@19.0.0)
-      lucide-react:
-        specifier: 'catalog:'
-        version: 0.475.0(react@19.0.0)
       react:
         specifier: 'catalog:'
         version: 19.0.0
@@ -602,6 +603,14 @@ packages:
 
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
+
+  '@hugeicons/core-free-icons@4.3.0':
+    resolution: {integrity: sha512-5DC5gq2psNDKBQThOjpuFCtMco8nl2FkrBzZgG15cFGM0kSwUoych/pw0DmjBygF9qRDITdBPtmzJqLsOeImMg==}
+
+  '@hugeicons/react@1.1.10':
+    resolution: {integrity: sha512-9tAsd92yMVVGP+E+d8cM+wc0VnXuYZHNbWQi7TOe8k2neawmhiaFmVFbzyruejhOMa197/LbgvSED32ayUo3ZA==}
+    peerDependencies:
+      react: '>=16.0.0'
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -1783,11 +1792,6 @@ packages:
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
-  lucide-react@0.475.0:
-    resolution: {integrity: sha512-NJzvVu1HwFVeZ+Gwq2q00KygM1aBhy/ZrhY9FsAgJtpB+E4R7uxRk9M2iKvHa6/vNxZydIB59htha4c2vvwvVg==}
-    peerDependencies:
-      react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
-
   magic-string@0.30.21:
     resolution: {integrity: sha512-vd2F4YUyEXKGcLHoq+TEyCjxueSeHnFxyyjNp80yg0XV4vUhnDer/lvvlqM/arB5bXQN5K2/3oinyCRyx8T2CQ==}
 
@@ -2634,6 +2638,12 @@ snapshots:
       react-dom: 19.0.0(react@19.0.0)
 
   '@floating-ui/utils@0.2.12': {}
+
+  '@hugeicons/core-free-icons@4.3.0': {}
+
+  '@hugeicons/react@1.1.10(react@19.0.0)':
+    dependencies:
+      react: 19.0.0
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
@@ -3752,10 +3762,6 @@ snapshots:
   lru-cache@5.1.1:
     dependencies:
       yallist: 3.1.1
-
-  lucide-react@0.475.0(react@19.0.0):
-    dependencies:
-      react: 19.0.0
 
   magic-string@0.30.21:
     dependencies:

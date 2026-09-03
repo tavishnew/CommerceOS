@@ -490,6 +490,7 @@ async function seedProductsIfEmpty(): Promise<void> {
 
 interface MerchantCredentialsRow {
   merchant_id: string;
+  workspace_id: string;
   razorpay_key_id: string;
   razorpay_key_secret_encrypted: string;
   razorpay_webhook_secret_encrypted: string;
@@ -516,17 +517,22 @@ async function ensureMerchantCredentialsTable(): Promise<void> {
 }
 
 /**
- * Resolve Razorpay credentials for a merchant.
+ * Resolve Razorpay credentials for a merchant workspace.
  * Order: stored (decrypted) row → .env fallback (local dev only).
- * Returns null when nothing is configured for this merchant.
+ * Returns null when nothing is configured for this workspace.
+ *
+ * `workspaceId` is required. Callers must derive it from the request scope
+ * (body field for buyer checkout, order row for webhooks, etc.) — there is
+ * no implicit default. The migration `2026-09-03-razorpay-workspace-scoping`
+ * made `workspace_id` the primary key on `merchant_credentials`.
  */
-async function resolveRazorpayCreds(merchantId = 'default'): Promise<ResolvedRazorpayCreds | null> {
+async function resolveRazorpayCreds(workspaceId: string): Promise<ResolvedRazorpayCreds | null> {
   const { rows } = await pool.query<MerchantCredentialsRow>(
-    `SELECT merchant_id, razorpay_key_id,
+    `SELECT merchant_id, workspace_id, razorpay_key_id,
             razorpay_key_secret_encrypted, razorpay_webhook_secret_encrypted,
             updated_at
-     FROM merchant_credentials WHERE merchant_id = $1`,
-    [merchantId],
+     FROM merchant_credentials WHERE workspace_id = $1`,
+    [workspaceId],
   );
   if (rows.length > 0) {
     const r = rows[0];
@@ -1402,7 +1408,7 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
   let merchantCeiling = 180;
   try {
     const { rows } = await pool.query<{ max_auto_approve: number | string }>(
-      `SELECT max_auto_approve FROM merchant_settings WHERE merchant_id = $1`,
+      `SELECT max_auto_approve FROM merchant_settings WHERE workspace_id = $1`,
       [merchantWorkspace()],
     );
     if (rows[0]) merchantCeiling = Number(rows[0].max_auto_approve);
@@ -1467,7 +1473,7 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
   // Resolve credentials before creating order so we fail fast
   let creds: ResolvedRazorpayCreds | null = null;
   try {
-    creds = await resolveRazorpayCreds();
+    creds = await resolveRazorpayCreds(workspaceId);
   } catch (err) {
     console.error('checkout/start: failed to resolve credentials:', err);
   }
@@ -1791,7 +1797,7 @@ app.post('/api/orders/:id/refund', async (req, res) => {
 
   let creds: ResolvedRazorpayCreds | null = null;
   try {
-    creds = await resolveRazorpayCreds();
+    creds = await resolveRazorpayCreds(workspaceId);
   } catch (err) {
     console.error('refund: failed to resolve credentials:', err);
     res
@@ -1967,17 +1973,25 @@ interface MerchantSettingsRow {
 async function ensureMerchantSettingsTable(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS merchant_settings (
-      merchant_id          TEXT PRIMARY KEY DEFAULT 'default',
+      merchant_id          TEXT,
+      workspace_id         TEXT PRIMARY KEY,
       max_auto_approve     NUMERIC(12,2) NOT NULL DEFAULT 180.00,
       require_human_above_cap BOOLEAN NOT NULL DEFAULT TRUE
     );
   `);
-  // Seed default row if empty
-  const { rowCount } = await pool.query('SELECT 1 FROM merchant_settings LIMIT 1');
+  // Seed the server's own workspace row if it doesn't exist yet. After the
+  // 2026-09-03 migration, the PK is `workspace_id`; the row must include
+  // both `merchant_id` (legacy) and `workspace_id` (new lookup key).
+  const ws = merchantWorkspace();
+  const { rowCount } = await pool.query(
+    'SELECT 1 FROM merchant_settings WHERE workspace_id = $1',
+    [ws],
+  );
   if (rowCount === 0) {
     await pool.query(
-      `INSERT INTO merchant_settings (merchant_id, max_auto_approve, require_human_above_cap)
-       VALUES ('default', 180.00, TRUE)`,
+      `INSERT INTO merchant_settings (merchant_id, workspace_id, max_auto_approve, require_human_above_cap)
+       VALUES ($1, $2, 180.00, TRUE)`,
+      [ws, ws],
     );
   }
 }
@@ -1986,8 +2000,8 @@ async function ensureMerchantSettingsTable(): Promise<void> {
 app.get('/api/settings', async (_req, res) => {
   try {
     const { rows } = await pool.query<MerchantSettingsRow>(
-      'SELECT merchant_id, max_auto_approve, require_human_above_cap FROM merchant_settings WHERE merchant_id = $1',
-      ['default'],
+      'SELECT merchant_id, max_auto_approve, require_human_above_cap FROM merchant_settings WHERE workspace_id = $1',
+      [merchantWorkspace()],
     );
     if (rows.length === 0) {
       res
@@ -2012,16 +2026,18 @@ app.get('/api/settings', async (_req, res) => {
 // PUT /api/settings — update merchant settings
 app.put('/api/settings', async (req, res) => {
   const { maxAutoApprove, requireHumanAboveCap } = req.body ?? {};
+  const ws = merchantWorkspace();
   try {
     const { rows } = await pool.query<MerchantSettingsRow>(
       `UPDATE merchant_settings
        SET max_auto_approve = COALESCE($1, max_auto_approve),
            require_human_above_cap = COALESCE($2, require_human_above_cap)
-       WHERE merchant_id = 'default'
+       WHERE workspace_id = $3
        RETURNING merchant_id, max_auto_approve, require_human_above_cap`,
       [
         maxAutoApprove != null ? Number(maxAutoApprove) : null,
         requireHumanAboveCap != null ? Boolean(requireHumanAboveCap) : null,
+        ws,
       ],
     );
     if (rows.length === 0) {
@@ -2056,9 +2072,9 @@ function maskRazorpayKeyId(keyId: string): string {
 app.get('/api/settings/razorpay', async (_req, res) => {
   try {
     const { rows } = await pool.query<MerchantCredentialsRow>(
-      `SELECT merchant_id, razorpay_key_id, updated_at
-       FROM merchant_credentials WHERE merchant_id = $1`,
-      ['default'],
+      `SELECT merchant_id, workspace_id, razorpay_key_id, updated_at
+       FROM merchant_credentials WHERE workspace_id = $1`,
+      [merchantWorkspace()],
     );
     if (rows.length === 0) {
       const envId = process.env.RAZORPAY_KEY_ID;
@@ -2128,16 +2144,22 @@ app.put('/api/settings/razorpay', async (req, res) => {
   try {
     const encSecret = encryptSecret(keySecret);
     const encWebhook = encryptSecret(webhookSecret);
+    const ws = merchantWorkspace();
+    // After the 2026-09-03 migration, the PK on merchant_credentials is
+    // `workspace_id`. We upsert by workspace_id and also keep the
+    // legacy `merchant_id` column populated (it equals workspace_id for
+    // the singleton deployment, per the migration backfill).
     await pool.query(
       `INSERT INTO merchant_credentials
-         (merchant_id, razorpay_key_id, razorpay_key_secret_encrypted, razorpay_webhook_secret_encrypted, updated_at)
-       VALUES ('default', $1, $2, $3, NOW())
-       ON CONFLICT (merchant_id) DO UPDATE SET
+         (merchant_id, workspace_id, razorpay_key_id, razorpay_key_secret_encrypted, razorpay_webhook_secret_encrypted, updated_at)
+       VALUES ($1, $2, $3, $4, $5, NOW())
+       ON CONFLICT (workspace_id) DO UPDATE SET
+         merchant_id = EXCLUDED.merchant_id,
          razorpay_key_id = EXCLUDED.razorpay_key_id,
          razorpay_key_secret_encrypted = EXCLUDED.razorpay_key_secret_encrypted,
          razorpay_webhook_secret_encrypted = EXCLUDED.razorpay_webhook_secret_encrypted,
          updated_at = NOW()`,
-      [keyId, encSecret, encWebhook],
+      [ws, ws, keyId, encSecret, encWebhook],
     );
     res.json({ configured: true, mode, keyIdMasked: maskRazorpayKeyId(keyId) });
   } catch (err) {
@@ -2152,7 +2174,10 @@ app.put('/api/settings/razorpay', async (req, res) => {
 // DELETE /api/settings/razorpay — clear stored creds, fall back to env (if any)
 app.delete('/api/settings/razorpay', async (_req, res) => {
   try {
-    await pool.query(`DELETE FROM merchant_credentials WHERE merchant_id = 'default'`);
+    await pool.query(
+      `DELETE FROM merchant_credentials WHERE workspace_id = $1`,
+      [merchantWorkspace()],
+    );
     const envId = process.env.RAZORPAY_KEY_ID;
     const envFallbackAvailable = !!(envId && process.env.RAZORPAY_KEY_SECRET);
     res.json({ configured: false, envFallbackAvailable });
@@ -2166,9 +2191,12 @@ app.delete('/api/settings/razorpay', async (_req, res) => {
 
 // POST /api/settings/razorpay/test — make one lightweight Razorpay call
 app.post('/api/settings/razorpay/test', async (_req, res) => {
+  // Settings test always targets the merchant-server's own workspace —
+  // it has no buyer-side context. `merchantWorkspace()` returns the
+  // single workspace this server is configured for today.
   let creds: ResolvedRazorpayCreds | null = null;
   try {
-    creds = await resolveRazorpayCreds();
+    creds = await resolveRazorpayCreds(merchantWorkspace());
   } catch (err) {
     console.error('test credentials: failed to resolve:', err);
     res
@@ -2240,8 +2268,9 @@ app.post('/api/admin/razorpay/reconcile', async (req, res) => {
     res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Admin token required.' } });
     return;
   }
+  // Admin reconcile operates on the server's own configured workspace.
   let creds: ResolvedRazorpayCreds | null = null;
-  try { creds = await resolveRazorpayCreds(); } catch { /* swallow */ }
+  try { creds = await resolveRazorpayCreds(merchantWorkspace()); } catch { /* swallow */ }
   if (!creds) {
     res.status(409).json({ error: { code: 'RAZORPAY_NOT_CONFIGURED', message: 'No credentials.' } });
     return;
@@ -2340,8 +2369,9 @@ app.post('/api/admin/razorpay/refunds/reconcile', async (req, res) => {
     res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Admin token required.' } });
     return;
   }
+  // Admin reconcile operates on the server's own configured workspace.
   let creds: ResolvedRazorpayCreds | null = null;
-  try { creds = await resolveRazorpayCreds(); } catch { /* swallow */ }
+  try { creds = await resolveRazorpayCreds(merchantWorkspace()); } catch { /* swallow */ }
   if (!creds) {
     res.status(409).json({ error: { code: 'RAZORPAY_NOT_CONFIGURED', message: 'No credentials.' } });
     return;
@@ -2561,7 +2591,10 @@ app.post('/api/checkout/human-approve/:orderId', async (req, res) => {
     let keyId: string | null = null;
 
     try {
-      const creds = await resolveRazorpayCreds();
+      // `r.workspace_id` came from the order row's RETURNING clause above.
+      // Fall back to the server's configured workspace if the column is
+      // somehow null (defensive — should not happen post-migration).
+      const creds = await resolveRazorpayCreds(r.workspace_id ?? merchantWorkspace());
       if (!creds) {
         res.status(409).json({
           error: {
@@ -2965,8 +2998,8 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
   let maxAutoApprove = 180;
   try {
     const { rows } = await pool.query<MerchantSettingsRow>(
-      'SELECT max_auto_approve, require_human_above_cap FROM merchant_settings WHERE merchant_id = $1',
-      ['default'],
+      'SELECT max_auto_approve, require_human_above_cap FROM merchant_settings WHERE workspace_id = $1',
+      [merchantWorkspace()],
     );
     if (rows.length > 0) {
       maxAutoApprove = Number(rows[0].max_auto_approve);
@@ -3160,8 +3193,8 @@ app.post('/api/buyer/upsell/accept', upsellLimiter, async (req, res) => {
     let merchantCap = 180;
     try {
       const r = await pool.query<MerchantSettingsRow>(
-        'SELECT max_auto_approve FROM merchant_settings WHERE merchant_id = $1',
-        ['default'],
+        'SELECT max_auto_approve FROM merchant_settings WHERE workspace_id = $1',
+        [merchantWorkspace()],
       );
       if (r.rows.length > 0) merchantCap = Number(r.rows[0].max_auto_approve);
     } catch {
@@ -3267,9 +3300,11 @@ app.post('/api/checkout/create-order', (_req, res) => {
 // Verifies HMAC over the exact raw bytes (req.rawBody), idempotency via
 // webhook_events, server-authoritative state transition, structured audit.
 app.post('/api/checkout/webhook', async (req, res) => {
+  // Webhooks do not carry workspace context. The HMAC secret is the
+  // server's own configured workspace (today `merchantWorkspace()`).
   let creds: ResolvedRazorpayCreds | null = null;
   try {
-    creds = await resolveRazorpayCreds();
+    creds = await resolveRazorpayCreds(merchantWorkspace());
   } catch (err) {
     console.error('webhook: failed to resolve credentials:', err);
   }
@@ -3510,7 +3545,9 @@ app.get('/api/checkout/verify/:orderId', async (req, res) => {
     // is the SAME function the webhook uses, so a verify cannot bypass the
     // human-approval gate (markPaid refuses pending_human_review).
     try {
-      const creds = await resolveRazorpayCreds();
+      // `order.workspace_id` is the order's workspace; fall back to the
+      // server's configured workspace for the merchant path.
+      const creds = await resolveRazorpayCreds(order.workspace_id ?? merchantWorkspace());
       if (creds) {
         const auth = Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString('base64');
         const rpRes = await fetch(`https://api.razorpay.com/v1/orders?receipt=order_${orderId}`, {
@@ -3903,7 +3940,7 @@ async function start() {
       // than one row in practice.
       try {
         const { rows } = await pool.query<{ max_auto_approve: number | string }>(
-          `SELECT max_auto_approve FROM merchant_settings WHERE merchant_id = $1 LIMIT 1`,
+          `SELECT max_auto_approve FROM merchant_settings WHERE workspace_id = $1 LIMIT 1`,
           [MERCHANT_WORKSPACE_ID],
         );
         if (rows.length > 0) return Number(rows[0]!.max_auto_approve);

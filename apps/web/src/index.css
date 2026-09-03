@@ -372,6 +372,30 @@
     color: var(--commerce-signal-foreground);
   }
 
+  /* Hide scrollbars app-wide while preserving wheel/touch/keyboard scroll.
+     Prevents layout shift when the sidebar toggles and the viewport
+     scrollbar appears/disappears. Webkit + Firefox + legacy Edge. */
+  html,
+  body {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+  *::-webkit-scrollbar {
+    width: 0;
+    height: 0;
+    display: none;
+  }
+  * {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
   /* Visible keyboard focus on every interactive element.
      3px offset, design-spec focus token. Mouse focus is suppressed so the
      ring only appears for keyboard users. */
@@ -449,10 +473,18 @@
     perspective: 900px;
   }
   .wireframe-grid {
-    background-image:
-      linear-gradient(color-mix(in oklab, var(--commerce-signal) 22%, transparent) 1px, transparent 1px),
-      linear-gradient(90deg, color-mix(in oklab, var(--commerce-signal) 22%, transparent) 1px, transparent 1px);
-    background-size: 28px 28px;
+    /* Was: tiled linear-gradient grid lines (28x28 cell). Replaced with a
+     * single radial + conic glow so the orbital ring in the hero feels
+     * like a horizon, not graph paper. No fixed-size tile. */
+    background:
+      radial-gradient(ellipse 80% 60% at 50% 40%,
+        color-mix(in oklab, var(--commerce-signal) 18%, transparent) 0%,
+        color-mix(in oklab, var(--commerce-signal) 6%, transparent) 35%,
+        transparent 70%),
+      conic-gradient(from 220deg at 50% 55%,
+        transparent 0deg,
+        color-mix(in oklab, var(--commerce-signal) 10%, transparent) 60deg,
+        transparent 140deg);
     box-shadow: 0 0 70px color-mix(in oklab, var(--commerce-signal) 8%, transparent);
   }
   .scanline {
