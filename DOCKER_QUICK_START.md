@@ -18,7 +18,7 @@
 - **Framework**: Node.js + Express + TypeScript
 - **Auto-reload**: Enabled (tsx watch)
 - **Database**: Connected to PostgreSQL
-- **Test Mode**: Razorpay test mode enabled (TEST_MODE_NO_RAZORPAY=1)
+- **Test Mode**: Razorpay test mode enabled (`RAZORPAY_MODE=test`, real `rzp_test_…` keys)
 
 ### 3. **Web App (React + Vite)**
 - **Status**: Building (dev mode with hot reload)
@@ -166,7 +166,11 @@ PORT=5000
 ENCRYPTION_KEY=devkey-devkey-devkey-devkey-devkey-devkey01
 SUPPLIER_URL=http://host.docker.internal:8080
 RETAILER_URL=http://host.docker.internal:8082
-TEST_MODE_NO_RAZORPAY=1
+RAZORPAY_MODE=test
+RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
+RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+RAZORPAY_WEBHOOK_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+DISABLE_RATE_LIMITS=0
 ```
 
 ### Web Environment Variables (already configured in docker-compose.yml)

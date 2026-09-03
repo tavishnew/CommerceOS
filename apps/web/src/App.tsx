@@ -4034,7 +4034,7 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
   }>({ busy: false, result: null, error: null });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
-  const sample = 'Find a warm, quiet desk lamp under $180 with delivery this week.';
+  const sample = 'Find a warm desk lamp under $180 for evening reading.';
   const isCheckout = subpage === '/buyer/checkout';
   const isTrace = subpage === '/buyer/trace';
   const isOrders = subpage === '/buyer/orders';

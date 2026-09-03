@@ -23,7 +23,8 @@ Last audit: 2026-09-02.
 | `RAZORPAY_KEY_ID` | prod | `rzp_test_…` | Razorpay test/live key id. Leave blank in prod and configure per-merchant via Settings UI. |
 | `RAZORPAY_KEY_SECRET` | prod | — | Same. |
 | `RAZORPAY_WEBHOOK_SECRET` | prod | — | Same. |
-| `TEST_MODE_NO_RAZORPAY` | no | `0` | `1` short-circuits real Razorpay calls for local + automated tests. **Must be `0` or unset in prod.** |
+| `RAZORPAY_MODE` | no | `test` | `test` or `live`. Runtime guard at boot refuses `live` unless `RAZORPAY_KEY_ID` starts with `rzp_live_`, and refuses `test` if the key starts with `rzp_live_`. Empty / unset skips the guard. |
+| `DISABLE_RATE_LIMITS` | no | `0` | `1` disables every rate limiter. Independent of `RAZORPAY_MODE`. Useful for automated tests. **Must be `0` in prod.** |
 | `DEMO_ACCOUNT_EMAIL` | no | `tavish350@gmail.com` | Email that routes to the demo workspace. |
 | `ADMIN_TOKEN` | no (recommended prod) | — | Gates `/api/admin/*` operator endpoints via `X-Admin-Token` header. If unset, admin routes are disabled. |
 | `PGSSLMODE` | no | derived from `DATABASE_URL` | Override the `pg` pool TLS mode. |
@@ -52,7 +53,7 @@ Cross-check vs `docker-compose.yml`: the compose file omits `DEMO_ACCOUNT_EMAIL`
 
 - `.gitignore` covers `apps/api/.env`, `apps/web/.env`, `apps/web/.env.local`, `apps/web/.env.development`, `apps/web/.env.production`, root `.env`, and all `.env.*.local`. Confirmed clean.
 - `apps/api/src/crypto.ts:17` reads `ENCRYPTION_KEY` with no default; if unset the encryption layer fails closed (refuses to start).
-- `apps/api/src/index.ts:412-415, 1548, 1837, 2507` gates real Razorpay calls behind `TEST_MODE_NO_RAZORPAY=1`. Default compose value is `0`. **In Render prod, leave this unset or `0`.**
+- `apps/api/src/index.ts` (Part A refactor): all real Razorpay calls now use the live API in both `test` and `live` modes. The runtime guard at boot enforces the key-prefix / mode pairing. No `TEST_MODE_NO_RAZORPAY` branches remain. **In Render prod, set `RAZORPAY_MODE=live` and a `rzp_live_…` key id (or per-merchant credentials).**
 - `apps/api/.env.example` documents all env vars with safe placeholder values; no live keys are committed.
 - The repo's `.npmrc` is committed but only configures pnpm store layout. No secrets.
 
@@ -93,7 +94,7 @@ set; non-preflight requests get the same header treatment. No wildcards,
 no origin reflection. After changing `FRONTEND_ORIGIN` on Render you
 must redeploy — env vars are read once at module load.
 
-**Do not set** `TEST_MODE_NO_RAZORPAY` (leave it unset so production hits real Razorpay). Configure per-merchant Razorpay credentials via the merchant Settings UI or set `RAZORPAY_KEY_ID`/`RAZORPAY_KEY_SECRET`/`RAZORPAY_WEBHOOK_SECRET` for the platform default.
+**Do not set** `TEST_MODE_NO_RAZORPAY` (it's gone). Set `RAZORPAY_MODE=live` in prod, with `RAZORPAY_KEY_ID` starting with `rzp_live_` — the boot guard refuses to start otherwise. Configure per-merchant Razorpay credentials via the merchant Settings UI, or set the env-fallback trio for the platform default.
 
 Optional:
 

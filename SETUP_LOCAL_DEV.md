@@ -73,8 +73,13 @@ ENCRYPTION_KEY=devkey-devkey-devkey-devkey-devkey-devkey01
 SUPPLIER_URL=http://localhost:8080
 RETAILER_URL=http://localhost:8082
 PORT=5000
-TEST_MODE_NO_RAZORPAY=1
+RAZORPAY_MODE=test
+RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
+RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+RAZORPAY_WEBHOOK_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
 ```
+
+> See [Razorpay test keys](#razorpay-test-keys) below for how to obtain real `rzp_test_…` keys.
 
 ### Step 3: Create Database
 ```bash
@@ -128,8 +133,39 @@ ENCRYPTION_KEY=devkey-devkey-devkey-devkey-devkey-devkey01
 SUPPLIER_URL=http://localhost:8080
 RETAILER_URL=http://localhost:8082
 PORT=5000
-TEST_MODE_NO_RAZORPAY=1
+RAZORPAY_MODE=test
+RAZORPAY_KEY_ID=rzp_test_xxxxxxxxxxxx
+RAZORPAY_KEY_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
+RAZORPAY_WEBHOOK_SECRET=xxxxxxxxxxxxxxxxxxxxxxxx
 ```
+
+### Razorpay test keys
+
+CommerceOS calls the real Razorpay REST API in `RAZORPAY_MODE=test` — no
+synthetic ids, no faked refunds. You need three values from a Razorpay
+test-mode dashboard:
+
+1. Sign in at <https://dashboard.razorpay.com/> (or create an account).
+2. Toggle the dashboard to **Test Mode** (top-left switch).
+3. **Settings → API Keys → Generate Test Key** — copy the `Key Id`
+   (`rzp_test_…`) and `Key Secret`.
+4. **Settings → Webhooks → Create New Webhook**:
+   - URL: `https://<your-ngrok-host>/api/checkout/webhook`
+   - Active events: `payment.captured`, `payment.failed`,
+     `refund.processed`, `refund.failed`
+   - Secret: any string — copy it as `RAZORPAY_WEBHOOK_SECRET` and put the
+     same value in the dashboard's "Secret" field.
+
+For local dev with ngrok, copy the public HTTPS URL ngrok gives you for
+your API and paste it as the webhook URL. Razorpay's dashboard has a
+"**Send test webhook**" button on the Webhook detail page — use it to
+fire a `payment.captured` event against your local endpoint without
+running the checkout UI.
+
+Test card: `4111 1111 1111 1111`, any future expiry, any CVV, any OTP.
+The same `RAZORPAY_KEY_ID`/`KEY_SECRET`/`WEBHOOK_SECRET` is used for the
+HMAC signature verification, so the inbound webhook path runs the
+genuine verification code against the secret you set.
 
 ### Service Ports
 | Service | Port | URL |

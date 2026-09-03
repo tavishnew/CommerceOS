@@ -115,7 +115,7 @@ Fixed: missing `orderId` arg at the cancel-route call site.
 - Order creation: `rzp_test_*` keys only (hard-coded check).
 - Idempotency: per-order `razorpay_create_idem_key`.
 - Refund: amount derived server-side from order row (client never supplies it).
-- Test mode short-circuit via `TEST_MODE_NO_RAZORPAY=1`.
+- Test mode short-circuit via `TEST_MODE_NO_RAZORPAY=1` (removed — now uses the real Razorpay API in both `test` and `live` modes; `RAZORPAY_MODE` env var plus a boot guard enforces the key-prefix pairing).
 
 ## WEBHOOK
 

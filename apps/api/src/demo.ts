@@ -92,20 +92,29 @@ export async function seedDemoDataIfEmpty(pool: pg.Pool): Promise<void> {
   );
   if (oc && oc > 0) return;
 
-  // Look up a product to attach demo orders to. We pick the first active
-  // product with inventory so the line items render. If the catalog is
-  // empty we still seed the audit/activity rows so the page is not blank.
-  const { rows: prods } = await pool.query<{ id: number; price: number | string; name: string }>(
+  // Look up a product to attach demo orders to. We prefer sku-pinned
+  // rows so the demo's two orders land on actual seeded items: the warm
+  // desk lamp (paid, under the auto-approve cap) and the premium lamp
+  // (pending_human_review, above the cap). Falls back to "first active
+  // product by id" if the lamp rows are missing for any reason.
+  const { rows: paidProds } = await pool.query<{ id: number; price: number | string; name: string }>(
+    `SELECT id, price, name FROM products WHERE sku = 'LP-WW-079' LIMIT 1`,
+  );
+  const { rows: reviewProds } = await pool.query<{ id: number; price: number | string; name: string }>(
+    `SELECT id, price, name FROM products WHERE sku = 'LP-PR-249' LIMIT 1`,
+  );
+  const { rows: anyProds } = await pool.query<{ id: number; price: number | string; name: string }>(
     `SELECT id, price, name FROM products WHERE enable_search = TRUE
        AND status != 'archived' AND availability = TRUE
      ORDER BY id LIMIT 1`,
   );
-  const firstProd = prods[0];
+  const paidProd = paidProds[0] ?? anyProds[0];
+  const reviewProd = reviewProds[0] ?? anyProds[0];
 
   const txn1 = 'TXN-DEMO-' + Date.now().toString(36) + '-001';
   const txn2 = 'TXN-DEMO-' + Date.now().toString(36) + '-002';
 
-  if (firstProd) {
+  if (paidProd && reviewProd) {
     await pool.query(
       `INSERT INTO orders
          (product_id, buyer_agent_id, amount, currency, status, transaction_id,
@@ -113,13 +122,13 @@ export async function seedDemoDataIfEmpty(pool: pg.Pool): Promise<void> {
        VALUES ($1, 'buyer.demo', $2, 'INR', 'paid', $3, $4, $5, NOW(), 'buyer', '{}'::jsonb),
               ($6, 'buyer.demo', $7, 'INR', 'pending_human_review', $8, $4, NULL, NULL, 'buyer', '{}'::jsonb)`,
       [
-        firstProd.id,
-        Number(firstProd.price),
+        paidProd.id,
+        Number(paidProd.price),
         txn1,
         DEMO_BUYER_WORKSPACE_ID,
         'pay_demo_' + Date.now().toString(36),
-        firstProd.id,
-        Number(firstProd.price),
+        reviewProd.id,
+        Number(reviewProd.price),
         txn2,
       ],
     );
@@ -140,8 +149,8 @@ export async function seedDemoDataIfEmpty(pool: pg.Pool): Promise<void> {
     [
       txn1,
       DEMO_MERCHANT_WORKSPACE,
-      firstProd?.name ?? 'demo item',
-      firstProd ? Number(firstProd.price) : 0,
+      paidProd?.name ?? 'demo item',
+      paidProd ? Number(paidProd.price) : 0,
       txn2,
     ],
   );

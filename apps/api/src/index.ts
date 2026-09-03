@@ -32,6 +32,7 @@ import {
   DEMO_MERCHANT_WORKSPACE,
   DEFAULT_MERCHANT_WORKSPACE_ID,
 } from './demo.js';
+import { mountAgentCatalog } from './agent-catalog.js';
 
 // Augment Express Request for rawBody (webhook HMAC).
 declare global {
@@ -366,24 +367,124 @@ async function ensureProductsTable(): Promise<void> {
       product_category    TEXT,
       enable_search       BOOLEAN NOT NULL DEFAULT TRUE
     );
+    ALTER TABLE products ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
   `);
 }
 
-// Local-dev seed; no-op when table pre-populated (Neon).
+// Local-dev seed. Idempotent: upsert by sku, refresh name/price/availability
+// and image_link on every boot so a hand-tweaked DB doesn't drift. Image URLs
+// use picsum.photos with a fixed seed per sku so the same row always renders
+// the same placeholder. Real production deployments load products from a
+// merchant sync, not from this table.
 async function seedProductsIfEmpty(): Promise<void> {
-  const { rowCount } = await pool.query('SELECT 1 FROM products LIMIT 1');
-  if (rowCount && rowCount > 0) return;
+  const seedRows: Array<{
+    sku: string;
+    name: string;
+    description: string;
+    price: number;
+    availability: boolean;
+    inventory_quantity: number;
+    status: 'active' | 'out_of_stock';
+    brand: string;
+    product_category: string;
+    image_link: string;
+    enable_search: boolean;
+  }> = [
+    {
+      sku: 'LP-WW-079', name: 'Northwind Warm Desk Lamp',
+      description: 'Compact 8W LED desk lamp, 3000K warm white, brass-finish arm, integrated USB-A charging port. Designed for evening reading without disturbing sleep cycles.',
+      price: 79.00, availability: true, inventory_quantity: 24, status: 'active',
+      brand: 'Northwind', product_category: 'lighting',
+      image_link: 'https://picsum.photos/seed/lp-ww-079/640/480', enable_search: true,
+    },
+    {
+      sku: 'LP-NL-129', name: 'Northwind Neutral Desk Lamp',
+      description: 'Adjustable 12W LED desk lamp, 4000K neutral white, touch dimmer, three-point articulating head. Office and studio workhorse.',
+      price: 129.00, availability: true, inventory_quantity: 18, status: 'active',
+      brand: 'Northwind', product_category: 'lighting',
+      image_link: 'https://picsum.photos/seed/lp-nl-129/640/480', enable_search: true,
+    },
+    {
+      sku: 'LP-PR-249', name: 'Northwind Premium Desk Lamp',
+      description: 'Architect-grade 18W LED desk lamp, tunable 2700K-6500K, occupancy sensor, machined aluminum body, wireless charging base. The flagship.',
+      price: 249.00, availability: true, inventory_quantity: 6, status: 'active',
+      brand: 'Northwind', product_category: 'lighting',
+      image_link: 'https://picsum.photos/seed/lp-pr-249/640/480', enable_search: true,
+    },
+    {
+      sku: 'KB-MX-001', name: 'Almond MX Mechanical Keyboard',
+      description: 'Tactile quiet mechanical keyboard, USB-C, hot-swappable switches, USB-A pass-through, programmable per-key RGB.',
+      price: 149.00, availability: true, inventory_quantity: 12, status: 'active',
+      brand: 'Almond', product_category: 'keyboards',
+      image_link: 'https://picsum.photos/seed/kb-mx-001/640/480', enable_search: true,
+    },
+    {
+      sku: 'MS-Q-014', name: 'Almond Pebble Mouse',
+      description: 'Silent click wireless mouse, 18-month battery, USB-C rechargeable, ambidextrous shell, multi-device Bluetooth pairing.',
+      price: 39.00, availability: true, inventory_quantity: 40, status: 'active',
+      brand: 'Almond', product_category: 'mice',
+      image_link: 'https://picsum.photos/seed/ms-q-014/640/480', enable_search: true,
+    },
+    {
+      sku: 'HS-ST-077', name: 'Almond Studio Headphones',
+      description: 'Closed-back over-ear studio headphones, 32 ohm, detachable cable, 12 Hz-38 kHz response, memory-foam earcups.',
+      price: 179.00, availability: true, inventory_quantity: 6, status: 'active',
+      brand: 'Almond', product_category: 'audio',
+      image_link: 'https://picsum.photos/seed/hs-st-077/640/480', enable_search: true,
+    },
+    {
+      sku: 'DK-USC-203', name: 'Almond 11-in-1 USB-C Dock',
+      description: 'Dual 4K HDMI, gigabit ethernet, 100W passthrough, SD/microSD readers, 4x USB-A 3.2, 3.5mm audio. Aluminum chassis.',
+      price: 129.00, availability: true, inventory_quantity: 18, status: 'active',
+      brand: 'Almond', product_category: 'docks',
+      image_link: 'https://picsum.photos/seed/dk-usc-203/640/480', enable_search: true,
+    },
+    {
+      sku: 'LT-NB-512', name: 'Almond Notebook (refurb)',
+      description: '14" refurb business notebook, 16GB RAM, 512GB NVMe, 12th-gen Core i5, factory recertified, 1-year warranty.',
+      price: 689.00, availability: false, inventory_quantity: 0, status: 'out_of_stock',
+      brand: 'Almond', product_category: 'laptops',
+      image_link: 'https://picsum.photos/seed/lt-nb-512/640/480', enable_search: true,
+    },
+    {
+      sku: 'NS-AL-059', name: 'Northwind Aluminum Notebook Stand',
+      description: 'Folding aluminum laptop stand, 6 angles, supports up to 17", 220g, ships flat. Pairs with the Neutral Desk Lamp.',
+      price: 59.00, availability: true, inventory_quantity: 30, status: 'active',
+      brand: 'Northwind', product_category: 'desk-accessories',
+      image_link: 'https://picsum.photos/seed/ns-al-059/640/480', enable_search: true,
+    },
+    {
+      sku: 'CO-MG-024', name: 'Northwind Magnetic Cable Organizer',
+      description: 'Set of 6 silicone magnetic cable clips, 3 colors, adhesive backing, holds USB-C / Lightning / HDMI in place. No more desk spaghetti.',
+      price: 24.00, availability: true, inventory_quantity: 60, status: 'active',
+      brand: 'Northwind', product_category: 'desk-accessories',
+      image_link: 'https://picsum.photos/seed/co-mg-024/640/480', enable_search: true,
+    },
+  ];
 
-  await pool.query(`
-    INSERT INTO products
-      (sku, name, description, price, currency, availability, inventory_quantity, status, brand, product_category, image_link, enable_search)
-    VALUES
-      ('KB-MX-001', 'Almond MX Mechanical Keyboard', 'Tactile quiet mechanical keyboard, USB-C, hot-swappable switches.', 149.00, 'USD', TRUE, 12, 'active', 'Almond', 'keyboards', NULL, TRUE),
-      ('MS-Q-014',   'Almond Pebble Mouse',          'Silent click wireless mouse, 18-month battery.',                    39.00,  'USD', TRUE, 40, 'active', 'Almond', 'mice',     NULL, TRUE),
-      ('HS-ST-077',  'Almond Studio Headphones',     'Closed-back over-ear studio headphones, 32 ohm.',                  179.00, 'USD', TRUE, 6,  'active', 'Almond', 'audio',    NULL, TRUE),
-      ('DK-USC-203', 'Almond 11-in-1 USB-C Dock',    'Dual 4K HDMI, gigabit ethernet, 100W passthrough.',                129.00, 'USD', TRUE, 18, 'active', 'Almond', 'docks',    NULL, TRUE),
-      ('LT-NB-512',  'Almond Notebook (refurb)',     '14" refurb business notebook, 16GB / 512GB.',                       689.00, 'USD', FALSE, 0, 'out_of_stock', 'Almond', 'laptops', NULL, TRUE);
-  `);
+  for (const r of seedRows) {
+    await pool.query(
+      `INSERT INTO products
+         (sku, name, description, price, currency, availability,
+          inventory_quantity, status, brand, product_category, image_link, enable_search)
+       VALUES ($1,$2,$3,$4,'USD',$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (sku) DO UPDATE SET
+         name              = EXCLUDED.name,
+         description       = EXCLUDED.description,
+         price             = EXCLUDED.price,
+         availability      = EXCLUDED.availability,
+         inventory_quantity= EXCLUDED.inventory_quantity,
+         status            = EXCLUDED.status,
+         brand             = EXCLUDED.brand,
+         product_category  = EXCLUDED.product_category,
+         image_link        = EXCLUDED.image_link,
+         enable_search     = EXCLUDED.enable_search,
+         updated_at        = NOW()`,
+      [r.sku, r.name, r.description, r.price, r.availability,
+       r.inventory_quantity, r.status, r.brand, r.product_category,
+       r.image_link, r.enable_search],
+    );
+  }
 }
 
 // ── Merchant credentials ──
@@ -400,7 +501,7 @@ interface ResolvedRazorpayCreds {
   keyId: string;
   keySecret: string;
   webhookSecret: string;
-  source: 'merchant_row' | 'env_fallback' | 'env_fallback_test';
+  source: 'merchant_row' | 'env_fallback';
 }
 
 async function ensureMerchantCredentialsTable(): Promise<void> {
@@ -421,25 +522,6 @@ async function ensureMerchantCredentialsTable(): Promise<void> {
  * Returns null when nothing is configured for this merchant.
  */
 async function resolveRazorpayCreds(merchantId = 'default'): Promise<ResolvedRazorpayCreds | null> {
-  // Test mode short-circuit: never decrypt the stored credentials in tests.
-  // The webhook and refund routes already use TEST_MODE_NO_RAZORPAY=1 to
-  // bypass the real Razorpay call, so mirroring that here keeps the
-  // webhook signature check in sync with the env-supplied secret. The
-  // test fixture signs with RAZORPAY_WEBHOOK_SECRET; the API verifies
-  // against the same value when this flag is set.
-  if (process.env.TEST_MODE_NO_RAZORPAY === '1') {
-    const envId = process.env.RAZORPAY_KEY_ID;
-    const envSecret = process.env.RAZORPAY_KEY_SECRET;
-    const envWebhook = process.env.RAZORPAY_WEBHOOK_SECRET;
-    if (envId && envSecret) {
-      return {
-        keyId: envId,
-        keySecret: envSecret,
-        webhookSecret: envWebhook ?? '',
-        source: 'env_fallback_test',
-      };
-    }
-  }
   const { rows } = await pool.query<MerchantCredentialsRow>(
     `SELECT merchant_id, razorpay_key_id,
             razorpay_key_secret_encrypted, razorpay_webhook_secret_encrypted,
@@ -517,11 +599,11 @@ function createRateLimiter({ windowMs, max }: RateLimitOptions) {
   };
 }
 
-// Rate limits are bypassed when TEST_MODE_NO_RAZORPAY=1 (tests run hundreds
+// Rate limits are bypassed when DISABLE_RATE_LIMITS=1 (tests run hundreds
 // of requests against a single local API instance within a minute window —
 // the production limits are correct for real traffic, not for suites that
-// poke every state transition).
-const RATE_LIMIT_DISABLED = process.env.TEST_MODE_NO_RAZORPAY === '1';
+// poke every state transition). Independent of Razorpay mode.
+const RATE_LIMIT_DISABLED = process.env.DISABLE_RATE_LIMITS === '1';
 const buyerQueryLimiter = createRateLimiter({ windowMs: 60_000, max: RATE_LIMIT_DISABLED ? 100_000 : 30 });
 const upsellLimiter = createRateLimiter({ windowMs: 60_000, max: RATE_LIMIT_DISABLED ? 100_000 : 60 });
 const checkoutLimiter = createRateLimiter({ windowMs: 60_000, max: RATE_LIMIT_DISABLED ? 100_000 : 20 });
@@ -1563,57 +1645,10 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
   const tRzp = Date.now();
   let rpOrderId: string | null = null;
   let rpOrderAmount: number | null = null;
-  // Test hook: skip the real Razorpay call. Lets the test suite exercise
-  // the order/audit state machine without real credentials. The order
-  // keeps its current status (pending_human_review or human_approved) and
-  // gets a synthetic rp order id; the webhook remains the source of truth
-  // for transitions to paid.
-  if (process.env.TEST_MODE_NO_RAZORPAY === '1') {
-    // When the policy requires human approval, do NOT create the Razorpay
-    // order yet. The dedicated /api/checkout/human-approve/:orderId route
-    // is the only way to flip the order to human_approved AND mint the
-    // Razorpay order id.
-    if (policy.requiresHumanApproval) {
-      res.json({
-        orderId,
-        transactionId: txnId,
-        razorpayOrderId: null,
-        amount: Math.round(subtotal * 100),
-        currency: 'INR',
-        keyId: creds.keyId,
-        policy,
-        requiresHumanApproval: true,
-        evidence: signEvidence({ orderId, amount: subtotal, currency: 'INR', policy, txnId, status: 'pending_human_review' }),
-      });
-      return;
-    }
-    const fakeId = `rp_test_${orderId}`;
-    await pool.query(
-      `INSERT INTO razorpay_attempts
-         (order_id, attempt_number, idempotency_key, razorpay_order_id, response_status, completed_at)
-       VALUES ($1, 1, $2, $3, 'success', NOW())
-       ON CONFLICT (idempotency_key) DO NOTHING`,
-      [orderId, createIdemKey, fakeId],
-    );
-    await pool.query(
-      `UPDATE orders SET razorpay_order_id = $1 WHERE id = $2 AND razorpay_create_idem_key = $3`,
-      [fakeId, orderId, createIdemKey],
-    );
-    res.json({
-      orderId,
-      transactionId: txnId,
-      razorpayOrderId: fakeId,
-      amount: Math.round(subtotal * 100),
-      currency: 'INR',
-      keyId: creds.keyId,
-      policy,
-      evidence: signEvidence({ orderId, amount: subtotal, currency: 'INR', policy, txnId }),
-    });
-    return;
-  }
-  // Even in the real-Razorpay path, if the policy requires human approval
-  // we do NOT call Razorpay here. The dedicated human-approve route is the
-  // single place that flips the order and mints the external order id.
+  // If the policy requires human approval, do NOT create the Razorpay
+  // order yet. The dedicated /api/checkout/human-approve/:orderId route
+  // is the only way to flip the order to human_approved AND mint the
+  // Razorpay order id.
   if (policy.requiresHumanApproval) {
     res.json({
       orderId,
@@ -1855,13 +1890,9 @@ app.post('/api/orders/:id/refund', async (req, res) => {
     }
 
     try {
-      // Test hook: short-circuit Razorpay refund. Mirrors the success path
-      // with a synthetic refund id so the state machine can be exercised.
-      const refund: { id: string } = process.env.TEST_MODE_NO_RAZORPAY === '1'
-        ? { id: `rfd_test_${id}` }
-        : await (new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret }).payments as unknown as {
-            refund: (id: string, p: { amount: number }) => Promise<{ id: string }>;
-          }).refund(order.razorpay_payment_id as string, { amount: refundAmount });
+      const refund: { id: string } = await (new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret }).payments as unknown as {
+        refund: (id: string, p: { amount: number }) => Promise<{ id: string }>;
+      }).refund(order.razorpay_payment_id as string, { amount: refundAmount });
 
       const updated = await withTransaction(async (client) => {
         const r = await markRefunded(client, {
@@ -2527,45 +2558,37 @@ app.post('/api/checkout/human-approve/:orderId', async (req, res) => {
     let razorpayOrderId: string | null = null;
     let keyId: string | null = null;
 
-    if (process.env.TEST_MODE_NO_RAZORPAY === '1') {
-      razorpayOrderId = `rp_test_${r.id}`;
-      try {
-        const creds = await resolveRazorpayCreds();
-        if (creds) keyId = creds.keyId;
-      } catch { /* keyId stays null; client will surface error */ }
-    } else {
-      try {
-        const creds = await resolveRazorpayCreds();
-        if (!creds) {
-          res.status(409).json({
-            error: {
-              code: 'RAZORPAY_NOT_CONFIGURED',
-              message: 'No Razorpay credentials configured. Add them in Settings → Payment gateway.',
-            },
-          });
-          return;
-        }
-        keyId = creds.keyId;
-        const rp = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
-        const rpOrder = await (rp.orders as unknown as {
-          create: (params: Record<string, unknown>, opts?: { idempotency_key?: string }) => Promise<{ id: string; amount: number; currency: string }>;
-        }).create(
-          {
-            amount: amountPaise,
-            currency: 'INR',
-            receipt: `order_${r.id}`,
-            notes: { commerce0s_order_id: String(r.id) },
+    try {
+      const creds = await resolveRazorpayCreds();
+      if (!creds) {
+        res.status(409).json({
+          error: {
+            code: 'RAZORPAY_NOT_CONFIGURED',
+            message: 'No Razorpay credentials configured. Add them in Settings → Payment gateway.',
           },
-          { idempotency_key: idemKey ?? `c0s_ord_${r.transaction_id}` },
-        );
-        razorpayOrderId = rpOrder.id;
-      } catch (err) {
-        console.error('human-approve: Razorpay create failed:', err);
-        res.status(502).json({
-          error: { code: 'RAZORPAY_CREATE_FAILED', message: 'Could not create Razorpay order after approval.' },
         });
         return;
       }
+      keyId = creds.keyId;
+      const rp = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
+      const rpOrder = await (rp.orders as unknown as {
+        create: (params: Record<string, unknown>, opts?: { idempotency_key?: string }) => Promise<{ id: string; amount: number; currency: string }>;
+      }).create(
+        {
+          amount: amountPaise,
+          currency: 'INR',
+          receipt: `order_${r.id}`,
+          notes: { commerce0s_order_id: String(r.id) },
+        },
+        { idempotency_key: idemKey ?? `c0s_ord_${r.transaction_id}` },
+      );
+      razorpayOrderId = rpOrder.id;
+    } catch (err) {
+      console.error('human-approve: Razorpay create failed:', err);
+      res.status(502).json({
+        error: { code: 'RAZORPAY_CREATE_FAILED', message: 'Could not create Razorpay order after approval.' },
+      });
+      return;
     }
 
     if (razorpayOrderId && idemKey) {
@@ -3807,6 +3830,31 @@ function resolvePort(): number {
 const PORT = resolvePort();
 const HOST = '0.0.0.0';
 
+// Razorpay mode guard. Refuse to boot in `live` mode unless the key id
+// matches the `rzp_live_` prefix; refuse to boot in `test` mode if the key
+// is missing or starts with `rzp_live_`. Empty / unset mode falls through
+// to "use whatever is configured" so existing local-dev setups keep working.
+(function assertRazorpayMode() {
+  const mode = (process.env.RAZORPAY_MODE ?? '').toLowerCase();
+  if (mode === '') return;
+  const keyId = process.env.RAZORPAY_KEY_ID ?? '';
+  if (mode === 'live' && !keyId.startsWith('rzp_live_')) {
+    throw new Error(
+      `RAZORPAY_MODE=live but RAZORPAY_KEY_ID does not start with 'rzp_live_'. ` +
+        `Refusing to boot to prevent a real-money call with test keys.`,
+    );
+  }
+  if (mode === 'test' && keyId.startsWith('rzp_live_')) {
+    throw new Error(
+      `RAZORPAY_MODE=test but RAZORPAY_KEY_ID starts with 'rzp_live_'. ` +
+        `Refusing to boot to prevent a real-money call.`,
+    );
+  }
+  if ((mode === 'test' || mode === 'live') && keyId === '') {
+    throw new Error(`RAZORPAY_MODE=${mode} but RAZORPAY_KEY_ID is not set.`);
+  }
+})();
+
 async function start() {
   // Verify DB connection
   try {
@@ -3874,6 +3922,40 @@ async function start() {
   // source of truth for /api/activity; the outbox is the durability channel
   // for protocol events that must outlive a process restart.
   startOutbox(pool, { intervalMs: 5_000 });
+
+  // /agent/* — agent catalog + seller-agent endpoints. Contract lives in
+  // AGENT_CATALOG_DESIGN.md. Mounted after the rest of the API so the
+  // express.json() body parser above applies.
+  mountAgentCatalog(app, {
+    pool,
+    merchantWorkspace,
+    resolveAutoApproveCeiling: async () => {
+      // Ponytail: read merchant_settings.max_auto_approve for the merchant
+      // workspace, fall back to 180.00 (matches the demo seed). Promote to
+      // a per-workspace lookup once the merchant settings table has more
+      // than one row in practice.
+      try {
+        const { rows } = await pool.query<{ max_auto_approve: number | string }>(
+          `SELECT max_auto_approve FROM merchant_settings WHERE merchant_id = $1 LIMIT 1`,
+          [MERCHANT_WORKSPACE_ID],
+        );
+        if (rows.length > 0) return Number(rows[0]!.max_auto_approve);
+      } catch {
+        // Table may not exist yet on first boot; fall through.
+      }
+      return 180.0;
+    },
+    writeAudit: async ({ transactionId, workspaceId, actor, action, detail, amount, outcome }) => {
+      await pool.query(
+        `INSERT INTO audit_log
+           (transaction_id, workspace_id, actor, action, detail, amount, outcome)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+        [transactionId, workspaceId, actor, action, detail, amount, outcome],
+      );
+    },
+    newTxnId: () => newTxnId(),
+  });
+  console.log('🤖 Agent catalog mounted at /agent/catalog, /agent/seller/{negotiate,intent}');
 
   app.listen(PORT, HOST, () => {
     console.log(`🚀 API gateway listening on http://${HOST}:${PORT} (process.env.PORT=${process.env.PORT ?? '<unset>'})`);
