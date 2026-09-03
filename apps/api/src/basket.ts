@@ -8,6 +8,7 @@ import crypto from 'crypto';
 import type pg from 'pg';
 import type { PoolClient } from 'pg';
 import { evaluateTransactionPolicy } from './policy.js';
+import { InventoryUnavailable } from './inventory.js';
 
 type Db = pg.Pool | PoolClient;
 
@@ -37,12 +38,6 @@ export class ProductMissing extends Error {
   code = 'PRODUCT_NOT_FOUND';
   constructor(public productId: number) {
     super(`Product ${productId} not found.`);
-  }
-}
-export class InventoryUnavailable extends Error {
-  code = 'INVENTORY_UNAVAILABLE';
-  constructor(public productId: number) {
-    super(`Product ${productId} is out of stock.`);
   }
 }
 
@@ -87,7 +82,7 @@ export async function createBasket(
   productId: number,
 ): Promise<Basket> {
   const product = await loadActiveProduct(pool, productId);
-  if (!product.inStock) throw new InventoryUnavailable(productId);
+  if (!product.inStock) throw new InventoryUnavailable(productId, 'unavailable');
 
   const id = 'bsk_' + crypto.randomBytes(8).toString('base64url');
   const txnId = 'TXN-' + crypto.randomBytes(8).toString('base64url').toUpperCase();
@@ -125,7 +120,7 @@ export async function addToBasket(
   if (rows[0].status !== 'open') throw new BasketClosed();
 
   const product = await loadActiveProduct(pool, productId);
-  if (!product.inStock) throw new InventoryUnavailable(productId);
+  if (!product.inStock) throw new InventoryUnavailable(productId, 'unavailable');
 
   const existing = rows[0].items;
   if (existing.some((it) => it.productId === product.id)) {

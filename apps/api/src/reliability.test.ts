@@ -621,8 +621,8 @@ describe('g. human-approve — missing workspaceId defaults to merchant workspac
   });
 });
 
-describe('h. human-approve — atomic transition + strict audit + outbox', () => {
-  test('successful approve writes one audit row + one outbox row in same tx', async () => {
+describe('h. human-approve — atomic transition + strict audit', () => {
+  test('successful approve writes one audit row in same tx', async () => {
     // Use a separate workspace for this test so we have a clean tx scope.
     const testWs = 'ws_happrove_' + crypto.randomBytes(4).toString('hex');
     await api('PUT', '/api/buyer/session', { workspaceId: testWs, maxSpend: 50, autonomy: 'ask_before' });
@@ -645,19 +645,11 @@ describe('h. human-approve — atomic transition + strict audit + outbox', () =>
         [orderId],
       );
       expect(Number(audit[0].count)).toBe(1);
-      const { rows: obx } = await pool.query<{ count: string }>(
-        `SELECT COUNT(*)::text AS count FROM outbox_events
-         WHERE transaction_id = (SELECT transaction_id FROM orders WHERE id = $1)
-           AND action = 'human_override'`,
-        [orderId],
-      );
-      expect(Number(obx[0].count)).toBe(1);
     } finally {
       await pool.query(`DELETE FROM products WHERE id = $1`, [pid]);
       await pool.query(`DELETE FROM orders WHERE workspace_id = $1`, [testWs]);
       await pool.query(`DELETE FROM audit_log WHERE workspace_id = $1`, [testWs]);
       await pool.query(`DELETE FROM baskets WHERE workspace_id = $1`, [testWs]);
-      await pool.query(`DELETE FROM outbox_events WHERE workspace_id = $1`, [testWs]);
     }
   });
 });
@@ -804,28 +796,6 @@ describe('n. inventory — restore is idempotent across duplicates', () => {
   });
 });
 
-describe('o. outbox — events inserted on money paths', () => {
-  test('paid order via webhook has matching outbox row', async () => {
-    const { orderId, txnId } = await createPendingOrder(wsId, productId, 'pending');
-    const { body, signature } = await signedWebhook({
-      event: 'payment.captured',
-      paymentEntity: {
-        id: 'pay_obx_' + orderId,
-        amount: 10000,
-        notes: { commerce0s_order_id: `order_${orderId}` },
-      },
-    });
-    const res = await postWebhook({ payload: JSON.parse(body), signature, rawBody: body });
-    expect(res.status).toBe(200);
-    const { rows: obx } = await pool.query<{ count: string }>(
-      `SELECT COUNT(*)::text AS count FROM outbox_events
-        WHERE transaction_id = $1 AND action = 'payment_captured'`,
-      [txnId],
-    );
-    expect(Number(obx[0].count)).toBe(1);
-  });
-});
-
 describe('p. status assignment — auto-approved path', () => {
   test('subtotal under both ceilings → status=human_approved, no requiresHumanApproval flag', async () => {
     const testWs = 'ws_auto_' + crypto.randomBytes(4).toString('hex');
@@ -854,7 +824,6 @@ describe('p. status assignment — auto-approved path', () => {
       await pool.query(`DELETE FROM orders WHERE workspace_id = $1`, [testWs]);
       await pool.query(`DELETE FROM baskets WHERE workspace_id = $1`, [testWs]);
       await pool.query(`DELETE FROM audit_log WHERE workspace_id = $1`, [testWs]);
-      await pool.query(`DELETE FROM outbox_events WHERE workspace_id = $1`, [testWs]);
     }
   });
 });
@@ -888,7 +857,6 @@ describe('q. status assignment — approval-required path', () => {
       await pool.query(`DELETE FROM orders WHERE workspace_id = $1`, [testWs]);
       await pool.query(`DELETE FROM baskets WHERE workspace_id = $1`, [testWs]);
       await pool.query(`DELETE FROM audit_log WHERE workspace_id = $1`, [testWs]);
-      await pool.query(`DELETE FROM outbox_events WHERE workspace_id = $1`, [testWs]);
     }
   });
 });
@@ -986,7 +954,6 @@ describe('t. buyer order isolation', () => {
       await pool.query(`DELETE FROM orders WHERE workspace_id IN ($1, $2)`, [wsA, wsB]);
       await pool.query(`DELETE FROM baskets WHERE workspace_id IN ($1, $2)`, [wsA, wsB]);
       await pool.query(`DELETE FROM audit_log WHERE workspace_id IN ($1, $2)`, [wsA, wsB]);
-      await pool.query(`DELETE FROM outbox_events WHERE workspace_id IN ($1, $2)`, [wsA, wsB]);
     }
   });
 });

@@ -5,9 +5,9 @@ import crypto from 'crypto';
 import Razorpay from 'razorpay';
 import { encryptSecret, decryptSecret } from './crypto.js';
 import { evaluateTransactionPolicy, type PolicyResult } from './policy.js';
-import { newTxnId, recordEvent, signEvidence, emitProtocolEventTx } from './txn.js';
+import { newTxnId, recordEvent } from './txn.js';
 import { markPaid, markFailed, markRefunded, markRefundRequested, markRefundFailed, markDisputed } from './payment_state.js';
-import { ensureOutboxTable, startOutbox } from './outbox.js';
+// ponytail: outbox module removed (write-only, no consumer).
 import {
   createBasket,
   addToBasket,
@@ -16,13 +16,12 @@ import {
   BasketNotFound,
   BasketClosed,
   ProductMissing,
-  InventoryUnavailable,
 } from './basket.js';
 import {
   reserveInventory,
   restoreInventory,
   ensureInventoryReservationsTable,
-  InventoryUnavailable as InvUnav,
+  InventoryUnavailable,
 } from './inventory.js';
 import {
   isDemoAccountEmail,
@@ -1622,7 +1621,7 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
       });
       return;
     }
-    if (err instanceof InvUnav) {
+    if (err instanceof InventoryUnavailable) {
       res.status(409).json({
         error: {
           code: 'INVENTORY_UNAVAILABLE',
@@ -1659,7 +1658,6 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
       keyId: creds.keyId,
       policy,
       requiresHumanApproval: true,
-      evidence: signEvidence({ orderId, amount: subtotal, currency: 'INR', policy, txnId, status: 'pending_human_review' }),
     });
     return;
   }
@@ -1715,7 +1713,6 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
       currency: rpOrder.currency,
       keyId: creds.keyId,
       policy,
-      evidence: signEvidence({ orderId, amount: subtotal, currency: 'INR', policy, txnId }),
     });
   } catch (err) {
     const e = err as { statusCode?: number; message?: string };
@@ -1906,15 +1903,6 @@ app.post('/api/orders/:id/refund', async (req, res) => {
           outcome: 'success',
         });
         if (r.outcome === 'transitioned') {
-          await emitProtocolEventTx({
-            pool: client,
-            transactionId: order.transaction_id ?? '',
-            workspaceId: merchantWorkspace(),
-            protocol: 'system',
-            action: 'refund_processed',
-            payload: { orderId: id, refundId: refund.id, source: 'merchant_api' },
-            client,
-          });
         }
         return r.outcome === 'transitioned' ? { id, status: 'refunded' as const } : null;
       });
@@ -1934,15 +1922,6 @@ app.post('/api/orders/:id/refund', async (req, res) => {
           outcome: 'failed',
         });
         if (r.outcome === 'transitioned') {
-          await emitProtocolEventTx({
-            pool: client,
-            transactionId: order.transaction_id ?? '',
-            workspaceId: merchantWorkspace(),
-            protocol: 'system',
-            action: 'refund_failed',
-            payload: { orderId: id, reason: e?.message ?? 'unknown', source: 'merchant_api' },
-            client,
-          });
         }
       });
       const status = e?.statusCode;
@@ -2370,15 +2349,6 @@ app.post('/api/admin/razorpay/refunds/reconcile', async (req, res) => {
               outcome: 'success',
             });
             if (r.outcome === 'transitioned') {
-              await emitProtocolEventTx({
-                pool: client,
-                transactionId: c.transaction_id ?? '',
-                workspaceId: c.workspace_id,
-                protocol: 'system',
-                action: 'refund_processed',
-                payload: { orderId: c.id, refundId: found.id, source: 'reconcile' },
-                client,
-              });
             }
           });
           results.push({ orderId: c.id, action: 'recovered', refundId: found.id });
@@ -2523,16 +2493,6 @@ app.post('/api/checkout/human-approve/:orderId', async (req, res) => {
         detail: `Manual override for order ${orderId}`,
         amount: Number(r.amount),
         outcome: 'approved',
-      });
-      // Outbox event for downstream A2A/ACP notification.
-      await emitProtocolEventTx({
-        pool: client,
-        transactionId: r.transaction_id ?? '',
-        workspaceId: r.workspace_id ?? requestWs,
-        protocol: 'system',
-        action: 'human_override',
-        payload: { orderId, amount: Number(r.amount), status: 'human_approved' },
-        client,
       });
       return { row: r };
     });
@@ -3102,17 +3062,10 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
     });
   }
 
-  const evidencePayload = {
-    sessionId,
-    amount: recommended?.price ?? null,
-    policy,
-    decision: policyResult,
-  };
   res.json({
     sessionId,
     steps,
     result,
-    evidence: signEvidence(evidencePayload),
   });
 });
 
@@ -3355,15 +3308,6 @@ app.post('/api/checkout/webhook', async (req, res) => {
               outcome: 'success',
             });
             if (r.outcome === 'transitioned') {
-              await emitProtocolEventTx({
-                pool: client,
-                transactionId: ordRows[0]?.transaction_id ?? '',
-                workspaceId: ordRows[0]?.workspace_id ?? '',
-                protocol: 'system',
-                action: 'payment_captured',
-                payload: { orderId, paymentId: paymentEntity.id, source: 'webhook' },
-                client,
-              });
               console.log(`✅ Webhook: order ${orderId} marked as paid`);
             } else if (r.outcome === 'blocked') {
               // pending_human_review: webhook cannot auto-promote. Order
@@ -3453,15 +3397,6 @@ app.post('/api/checkout/webhook', async (req, res) => {
               outcome: 'success',
             });
             if (r.outcome === 'transitioned') {
-              await emitProtocolEventTx({
-                pool: client,
-                transactionId: o.transaction_id ?? '',
-                workspaceId: o.workspace_id,
-                protocol: 'system',
-                action: 'refund_processed',
-                payload: { orderId: o.id, refundId: rpRefundId, source: 'webhook' },
-                client,
-              });
             }
           }
         }
@@ -3558,15 +3493,6 @@ app.get('/api/checkout/verify/:orderId', async (req, res) => {
                 });
                 if (r.outcome === 'transitioned') {
                   order!.status = 'paid';
-                  await emitProtocolEventTx({
-                    pool: client,
-                    transactionId: order!.transaction_id ?? '',
-                    workspaceId: order!.workspace_id ?? workspaceId,
-                    protocol: 'system',
-                    action: 'payment_verified',
-                    payload: { orderId, source: 'verify' },
-                    client,
-                  });
                 }
               } else if (rpOrder.status === 'failed') {
                 const r = await markFailed(client, {
@@ -3905,9 +3831,6 @@ async function start() {
   await ensureAuditLogTable();
   console.log('✅ Audit log table ready');
 
-  await ensureOutboxTable(pool);
-  console.log('✅ Outbox table ready');
-
   await ensureInventoryReservationsTable(pool);
   console.log('✅ Inventory reservations table ready');
 
@@ -3916,12 +3839,6 @@ async function start() {
   // the demo buyer workspace has any orders.
   await seedDemoDataIfEmpty(pool);
   console.log('✅ Demo workspace seeded (or already populated)');
-
-  // Outbox publisher: default no-op transport. Wire a real `dispatch` here
-  // when a downstream A2A/ACP endpoint is configured. The audit log is the
-  // source of truth for /api/activity; the outbox is the durability channel
-  // for protocol events that must outlive a process restart.
-  startOutbox(pool, { intervalMs: 5_000 });
 
   // /agent/* — agent catalog + seller-agent endpoints. Contract lives in
   // AGENT_CATALOG_DESIGN.md. Mounted after the rest of the API so the

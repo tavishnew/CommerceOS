@@ -147,77 +147,22 @@ function agentErr(res: express.Response, status: number, code: string, message: 
   res.status(status).json({ error: { code, message } });
 }
 
-function parseIntParam(raw: unknown, def: number, min: number, max: number): number {
-  const n = typeof raw === 'string' ? Number.parseInt(raw, 10) : NaN;
-  if (!Number.isFinite(n)) return def;
-  if (n < min) return min;
-  if (n > max) return max;
-  return n;
-}
-
-function parseFloatParam(raw: unknown): number | null {
-  if (typeof raw !== 'string') return null;
-  const n = Number.parseFloat(raw);
-  return Number.isFinite(n) ? n : null;
-}
-
-function parseStringParam(raw: unknown): string | null {
+function strParam(raw: unknown): string | null {
   if (typeof raw !== 'string') return null;
   const s = raw.trim();
   return s.length > 0 ? s : null;
 }
 
-function parseCapabilitiesParam(raw: unknown): string[] {
-  if (typeof raw !== 'string') return [];
-  return raw
-    .split(',')
-    .map((s) => s.trim().toLowerCase())
-    .filter((s) => s.length > 0);
-}
-
-interface ListFilters {
-  category: string | null;
-  brand: string | null;
-  maxPrice: number | null;
-  minQty: number;
-  capabilities: string[];
-  q: string | null;
-  limit: number;
-  offset: number;
-}
-
-function parseListFilters(query: express.Request['query']): ListFilters {
-  return {
-    category: parseStringParam(query.category),
-    brand: parseStringParam(query.brand),
-    maxPrice: parseFloatParam(query.max_price),
-    minQty: parseIntParam(query.min_qty, 1, 1, 1000),
-    capabilities: parseCapabilitiesParam(query.capability),
-    q: parseStringParam(query.q),
-    limit: parseIntParam(query.limit, 50, 1, MAX_LIMIT),
-    offset: parseIntParam(query.offset, 0, 0, Number.MAX_SAFE_INTEGER),
-  };
+function numParam(raw: unknown, def: number, min: number, max: number): number {
+  const n = typeof raw === 'string' ? Number(raw) : NaN;
+  if (!Number.isFinite(n)) return def;
+  return Math.min(max, Math.max(min, n));
 }
 
 function productHasAllCapabilities(p: AgentProduct, wanted: string[]): boolean {
   if (wanted.length === 0) return true;
   const have = new Set(p.capabilities);
   return wanted.every((c) => have.has(c));
-}
-
-interface NegotiationRow {
-  sku: string;
-  name: string;
-  price: number | string;
-  currency: string;
-  inventory_quantity: number;
-  availability: boolean;
-  status: string;
-  brand: string | null;
-  product_category: string | null;
-  image_link: string | null;
-  description: string | null;
-  enable_search: boolean;
 }
 
 export interface AgentRouterDeps {
@@ -243,27 +188,38 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
   const { pool, merchantWorkspace, writeAudit, newTxnId } = deps;
 
   app.get('/agent/catalog', async (req, res) => {
-    const filters = parseListFilters(req.query);
+    const q = req.query;
+    const category = strParam(q.category);
+    const brand = strParam(q.brand);
+    const maxPrice = numParam(q.max_price, Number.POSITIVE_INFINITY, 0, Number.MAX_SAFE_INTEGER);
+    const minQty = numParam(q.min_qty, 1, 1, 1000);
+    const qText = strParam(q.q);
+    const limit = numParam(q.limit, 50, 1, MAX_LIMIT);
+    const offset = numParam(q.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+    const capabilities = typeof q.capability === 'string'
+      ? q.capability.split(',').map((s) => s.trim().toLowerCase()).filter((s) => s.length > 0)
+      : [];
+
     const where: string[] = ["enable_search = TRUE", "status != 'archived'"];
     const params: unknown[] = [];
-    if (filters.category) {
-      params.push(filters.category);
+    if (category) {
+      params.push(category);
       where.push(`LOWER(REPLACE(product_category, ' ', '-')) = $${params.length}`);
     }
-    if (filters.brand) {
-      params.push(filters.brand);
+    if (brand) {
+      params.push(brand);
       where.push(`LOWER(REPLACE(brand, ' ', '-')) = $${params.length}`);
     }
-    if (filters.maxPrice !== null) {
-      params.push(filters.maxPrice);
+    if (Number.isFinite(maxPrice)) {
+      params.push(maxPrice);
       where.push(`price <= $${params.length}`);
     }
-    if (filters.minQty > 0) {
-      params.push(filters.minQty);
+    if (minQty > 0) {
+      params.push(minQty);
       where.push(`inventory_quantity >= $${params.length}`);
     }
-    if (filters.q) {
-      params.push(`%${filters.q}%`);
+    if (qText) {
+      params.push(`%${qText}%`);
       const i = params.length;
       where.push(`(name ILIKE $${i} OR description ILIKE $${i})`);
     }
@@ -274,7 +230,7 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       const { rows: countRows } = await pool.query<{ total: number }>(countSql, params);
       const total = countRows[0]?.total ?? 0;
 
-      params.push(filters.limit, filters.offset);
+      params.push(limit, offset);
       const listSql = `SELECT sku, name, description, price, currency, availability,
                               inventory_quantity, status, image_link, brand,
                               product_category, enable_search
@@ -283,13 +239,13 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       const { rows } = await pool.query<ProductRow>(listSql, params);
 
       let products = projectProducts(rows);
-      if (filters.capabilities.length > 0) {
-        products = products.filter((p) => productHasAllCapabilities(p, filters.capabilities));
+      if (capabilities.length > 0) {
+        products = products.filter((p) => productHasAllCapabilities(p, capabilities));
       }
 
       res.json({
         schema_version: AGENT_SCHEMA_VERSION,
-        data: { total, limit: filters.limit, offset: filters.offset, products },
+        data: { total, limit, offset, products },
       });
     } catch (err) {
       console.error('GET /agent/catalog error:', err);
@@ -298,7 +254,7 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
   });
 
   app.get('/agent/catalog/:sku', async (req, res) => {
-    const sku = parseStringParam(req.params.sku);
+    const sku = strParam(req.params.sku);
     if (!sku) {
       agentErr(res, 400, 'INVALID_REQUEST', 'sku is required.');
       return;
@@ -328,32 +284,14 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
 
   // ── Seller-agent endpoints ────────────────────────────────────────────
 
-  function resolveCallerWorkspace(req: express.Request): string {
-    const headerWs =
-      (req.header('x-workspace-id') as string | undefined)?.trim() ||
-      (req.body?.workspaceId as string | undefined)?.trim();
-    return headerWs || merchantWorkspace();
-  }
-
-  function productForNegotiation(sku: string): Promise<NegotiationRow | null> {
-    return pool
-      .query<NegotiationRow>(
-        `SELECT sku, name, price, currency, inventory_quantity, availability,
-                status, brand, product_category, image_link, description, enable_search
-         FROM products WHERE sku = $1 AND enable_search = TRUE`,
-        [sku],
-      )
-      .then((r) => r.rows[0] ?? null);
-  }
-
   app.post('/agent/seller/negotiate', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const sku = parseStringParam(body.sku);
+    const sku = strParam(body.sku);
     const quantity = typeof body.quantity === 'number' ? body.quantity : Number(body.quantity);
     const proposedUnitPrice = typeof body.proposed_unit_price === 'number'
       ? body.proposed_unit_price
       : Number(body.proposed_unit_price);
-    const currency = parseStringParam(body.currency);
+    const currency = strParam(body.currency);
     if (!sku || !Number.isFinite(quantity) || quantity < 1) {
       agentErr(res, 400, 'INVALID_REQUEST', 'sku and positive quantity are required.');
       return;
@@ -363,7 +301,13 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       return;
     }
     try {
-      const product = await productForNegotiation(sku);
+      const { rows: prodRows } = await pool.query<ProductRow>(
+        `SELECT sku, name, price, currency, inventory_quantity, availability,
+                status, brand, product_category, image_link, description, enable_search
+         FROM products WHERE sku = $1 AND enable_search = TRUE`,
+        [sku],
+      );
+      const product = prodRows[0];
       if (!product) {
         agentErr(res, 404, 'NOT_FOUND', 'no such sku');
         return;
@@ -378,7 +322,9 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
           `only ${product.inventory_quantity} units available.`);
         return;
       }
-      const callerWs = resolveCallerWorkspace(req);
+      const callerWs = (req.header('x-workspace-id') as string | undefined)?.trim()
+        || (typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : '')
+        || merchantWorkspace();
       const callerIsMerchant = !req.body?.workspaceId
         || (typeof req.body.workspaceId === 'string'
             && req.body.workspaceId.trim() === merchantWorkspace());
@@ -447,7 +393,7 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
 
   app.post('/agent/seller/intent', async (req, res) => {
     const body = (req.body ?? {}) as Record<string, unknown>;
-    const intent = parseStringParam(body.intent);
+    const intent = strParam(body.intent);
     if (!intent) {
       agentErr(res, 400, 'INVALID_REQUEST', 'intent is required.');
       return;
@@ -515,7 +461,7 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
 
 // ── Intent parser ──────────────────────────────────────────────────────
 
-interface ParsedIntent {
+export interface ParsedIntent {
   category_hint: string | null;
   price_ceiling: number | null;
   attribute_hints: Record<string, number | boolean | string | null>;
@@ -539,7 +485,7 @@ const ATTRIBUTE_HINTS: Array<{ pattern: RegExp; key: string; value: number | boo
   { pattern: /\b(wireless|bluetooth)\b/, key: 'wireless', value: true },
 ];
 
-function parseIntentHeuristics(intent: string): ParsedIntent {
+export function parseIntentHeuristics(intent: string): ParsedIntent {
   let categoryHint: string | null = null;
   let bestCategoryHits = 0;
   for (const [cat, words] of Object.entries(CATEGORY_HINTS)) {

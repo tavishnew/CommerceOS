@@ -93,7 +93,7 @@ interface RazorpayInstance {
 }
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
-import { TooltipProvider } from '@/components/ui/tooltip';
+import { TooltipProvider } from '@radix-ui/react-tooltip';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import NotFound from '@/pages/not-found';
@@ -171,6 +171,14 @@ const navBuyer = [
   { href: '/buyer/orders', label: 'Order History', icon: Package },
   { href: '/buyer/settings', label: 'Settings', icon: SettingsIcon },
 ];
+
+function outcomeColor(o: string): string {
+  if (o === 'success' || o === 'auto_approved' || o === 'approved' || o === 'recovered')
+    return 'text-positive';
+  if (o === 'failed' || o === 'degraded' || o === 'human_approval_required')
+    return 'text-warning';
+  return 'text-muted-foreground';
+}
 
 function Logo({ inverse = false }: { inverse?: boolean }) {
   return (
@@ -1272,14 +1280,6 @@ function ActivityPanel() {
     queryFn: () => fetchActivity(6, undefined, isDemo),
     refetchInterval: 3000,
   });
-
-  const outcomeColor = (o: string) => {
-    if (o === 'success' || o === 'auto_approved' || o === 'approved' || o === 'recovered')
-      return 'text-positive';
-    if (o === 'failed' || o === 'degraded' || o === 'human_approval_required')
-      return 'text-warning';
-    return 'text-muted-foreground';
-  };
 
   return (
     <div className="rounded-2xl border border-foreground/10 bg-card p-5">
@@ -2543,14 +2543,6 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
     }
   };
 
-  const outcomeColor = (o: string) => {
-    if (o === 'success' || o === 'auto_approved' || o === 'approved' || o === 'recovered')
-      return 'text-positive';
-    if (o === 'failed' || o === 'degraded' || o === 'human_approval_required')
-      return 'text-warning';
-    return 'text-muted-foreground';
-  };
-
   return (
     <div className="space-y-6">
       <PageHeading
@@ -3015,10 +3007,10 @@ function TransactionDetailDrawer({
                   <h3 className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
                     orders
                   </h3>
-                  {data.orders.length === 0 && (
+                  {(data.orders?.length ?? 0) === 0 && (
                     <p className="mt-2 text-sm text-muted-foreground">No order rows.</p>
                   )}
-                  {data.orders.map((o) => (
+                  {(data.orders ?? []).map((o) => (
                     <div
                       key={o.id}
                       className="mt-2 rounded-lg border border-foreground/10 bg-card p-3"

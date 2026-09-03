@@ -247,11 +247,6 @@ async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
 export function fetchCatalog(): Promise<Product[]> {
   return apiFetch<Product[]>('/api/catalog');
 }
-
-export function fetchProduct(id: number): Promise<Product> {
-  return apiFetch<Product>(`/api/catalog/${id}`);
-}
-
 export function createProduct(
   data: Pick<Product, 'name' | 'sku'> & { price: number; quantity: number },
 ): Promise<Product> {
@@ -325,10 +320,6 @@ export function refundOrder(
 
 export function fetchOrders(): Promise<Order[]> {
   return apiFetch<Order[]>('/api/orders');
-}
-
-export function fetchOrdersByWorkspace(workspaceId: string): Promise<Order[]> {
-  return apiFetch<Order[]>(`/api/orders?workspaceId=${encodeURIComponent(workspaceId)}`);
 }
 
 export function fetchOrder(id: number, opts: { expand?: boolean } = {}): Promise<Order> {
