@@ -25,6 +25,7 @@ export function isDemoAccount(email: string | null | undefined): boolean {
 }
 
 const WS_KEY = 'commerce0s.buyerWorkspaceId';
+const MERCHANT_WS_KEY = 'commerce0s.merchantWorkspaceId';
 const EMAIL_KEY = 'commerce0s.buyerEmail';
 const BOOTSTRAPPED_KEY = 'commerce0s.buyerBootstrapped';
 
@@ -125,15 +126,25 @@ export async function bootstrapSession(
   }
   if (typeof localStorage !== 'undefined') {
     localStorage.setItem(WS_KEY, body.workspaceId);
+    localStorage.setItem(MERCHANT_WS_KEY, body.merchantWorkspaceId);
     setStoredBuyerEmail(body.email ?? null);
     localStorage.setItem(BOOTSTRAPPED_KEY, '1');
   }
   return body;
 }
 
-export function isBootstrapped(): boolean {
-  if (typeof localStorage === 'undefined') return false;
-  return localStorage.getItem(BOOTSTRAPPED_KEY) === '1';
+/** Read the merchant workspace id persisted from /api/bootstrap. Returns
+ *  null until the first successful bootstrap, or after the user signed out. */
+export function getStoredMerchantWorkspaceId(): string | null {
+  if (typeof localStorage === 'undefined') return null;
+  return localStorage.getItem(MERCHANT_WS_KEY);
+}
+
+/** Clears the merchant workspace id from localStorage. Called on sign-out
+ *  so the next /api/bootstrap can overwrite it with the new email's id. */
+export function clearStoredMerchantWorkspaceId(): void {
+  if (typeof localStorage === 'undefined') return;
+  localStorage.removeItem(MERCHANT_WS_KEY);
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────────
@@ -209,12 +220,19 @@ export interface Order {
  *   - bare string error body (`{ error: "..." }`) → ApiError with INTERNAL_ERROR
  *   - non-OK with no body → ApiError
  */
-async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+async function apiFetch<T>(path: string, init?: RequestInit & { __public?: boolean }): Promise<T> {
+  const isPublic = init?.__public === true;
+  const merchantWs = isPublic ? null : getStoredMerchantWorkspaceId();
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(merchantWs ? { 'X-Merchant-Workspace-Id': merchantWs } : {}),
+    ...(init?.headers as Record<string, string> | undefined),
+  };
   let res: Response;
   try {
     res = await fetch(`${API_BASE}${path}`, {
-      headers: { 'Content-Type': 'application/json' },
       ...init,
+      headers,
     });
   } catch (err) {
     throw new NetworkUnreachableError(err);
@@ -408,9 +426,6 @@ export function startCheckout(data: {
   });
 }
 
-// Dedicated human-approve route. The only sanctioned way to flip a
-// `pending_human_review` order to `human_approved`; cannot be triggered
-// inline via /api/checkout/start.
 export interface HumanApproveResponse {
   id: number;
   status: string;
@@ -469,24 +484,19 @@ export interface ActivityRow {
 export function fetchActivity(
   limit = 12,
   workspaceId?: string,
-  isDemo?: boolean,
+  opts: { publicView?: boolean } = {},
 ): Promise<ActivityRow[]> {
   const qs = new URLSearchParams();
   qs.set('limit', String(limit));
   if (workspaceId) qs.set('workspaceId', workspaceId);
-  // `isDemo` (set from /api/bootstrap's response) tells the server
-  // whether to include the seeded demo merchant workspace in the
-  // result union. Non-demo callers see only their own merchant-side
-  // rows; demo callers see the seeded demo trail merged in.
-  if (isDemo) qs.set('isDemo', 'true');
-  return apiFetch<ActivityRow[]>(`/api/activity?${qs.toString()}`);
+  return apiFetch<ActivityRow[]>(`/api/activity?${qs.toString()}`, {
+    __public: opts.publicView === true,
+  });
 }
 
 export interface TransactionDetail {
   transactionId: string;
   orders?: Order[];
-  // `audit` is optional in the wire type because older / partial
-  // responses may omit the array; the UI defaults to `[]` defensively.
   audit?: Array<ActivityRow & { transaction_id: string | null; workspace_id: string | null }>;
 }
 

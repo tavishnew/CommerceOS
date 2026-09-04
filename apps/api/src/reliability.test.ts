@@ -90,8 +90,6 @@ describe('Concurrent checkout', () => {
       winners = [r1, r2].filter((r) => r.status === 200);
       losers = [r1, r2].filter((r) => r.status !== 200);
       if (winners.length === 1 && losers.length === 1) break;
-      // Reset for retry: the order was created in the prior attempt,
-      // so the basket is closed. Create a fresh basket.
       const b2 = await api<{ id: string }>('POST', '/api/baskets', {
         workspaceId: wsId,
         productId,
@@ -165,10 +163,7 @@ describe('Concurrent human-approve', () => {
       '/api/checkout/start',
       { basketId: b.body.id, workspaceId: wsId },
     );
-    // The above may either succeed (human_approved) or be 409 (human_approval_required).
-    // We only proceed with the approval race if the order is still in pending_human_review.
     if (start.status !== 200) {
-      // Order was created in human_approved state already (auto path) — skip.
       await api('PUT', '/api/buyer/session', { workspaceId: wsId, maxSpend: 5000, autonomy: 'auto_up_to_limit' });
       return;
     }
@@ -408,7 +403,6 @@ describe('Duplicate webhook idempotency', () => {
         [o[0].transaction_id, wsId, `Test webhook for order ${orderId}`],
       );
     }
-    // Second delivery: claim returns 0 rows.
     const { rows: claim2 } = await pool.query<{ event_id: string }>(
       `INSERT INTO webhook_events (event_id, event_type, payload_hash)
        VALUES ($1, 'payment.captured', 'hash1') ON CONFLICT DO NOTHING RETURNING event_id`,
@@ -626,7 +620,6 @@ describe('h. human-approve — atomic transition + strict audit', () => {
     // Use a separate workspace for this test so we have a clean tx scope.
     const testWs = 'ws_happrove_' + crypto.randomBytes(4).toString('hex');
     await api('PUT', '/api/buyer/session', { workspaceId: testWs, maxSpend: 50, autonomy: 'ask_before' });
-    // Create a product on the fly in the test workspace.
     const { rows: prod } = await pool.query<{ id: number }>(
       `INSERT INTO products (sku, name, price, currency, availability, inventory_quantity, status)
        VALUES ($1, $2, 100, 'INR', TRUE, 100, 'active') RETURNING id`,
@@ -727,9 +720,6 @@ describe('m. dispute — paid → disputed is canonical; non-paid rejected', () 
 
 describe('n. inventory — restore is idempotent across duplicates', () => {
   test('two restore calls on same order flip reservation row exactly once', async () => {
-    // Direct test of the restoreInventory primitive via the DB layer.
-    // Admin cancel endpoint is gated by ADMIN_TOKEN; this test exercises
-    // the underlying idempotency contract instead.
     const sku = 'INV-IDEMP-' + crypto.randomBytes(3).toString('hex').toUpperCase();
     const { rows } = await pool.query<{ id: number; inventory_quantity: number }>(
       `INSERT INTO products (sku, name, price, currency, availability, inventory_quantity, status)
@@ -876,8 +866,6 @@ describe('r. browser cannot submit approval flag', () => {
 
 describe('s. audit failure rolls back money mutation', () => {
   test('when audit insert fails inside the tx, the order status UPDATE is rolled back', async () => {
-    // Drop the audit_log table briefly to force insertAudit to throw, then
-    // attempt a payment.captured webhook and prove the order is NOT flipped.
     const { rows: o } = await pool.query<{ id: number; transaction_id: string }>(
       `INSERT INTO orders (product_id, buyer_agent_id, amount, status, transaction_id, workspace_id,
          basket_id, basket, razorpay_create_idem_key)
@@ -906,8 +894,6 @@ describe('s. audit failure rolls back money mutation', () => {
         },
       });
       const res = await postWebhook({ payload: JSON.parse(body), signature, rawBody: body });
-      // The webhook route catches the error and returns 200 — but the
-      // business state must NOT have flipped. This is the ACID assertion.
       expect(res.status).toBe(200);
       const { rows } = await pool.query<{ status: string }>(
         `SELECT status FROM orders WHERE id = $1`,
@@ -946,7 +932,6 @@ describe('t. buyer order isolation', () => {
       expect(rOrder.status).toBe(404);
       const rTxn = await api<unknown>('GET', `/api/transactions/${txnId}?workspaceId=${wsB}`);
       expect(rTxn.status).toBe(404);
-      // Buyer-A fetch succeeds.
       const rSelf = await api<{ id: number }>('GET', `/api/orders/${orderId}?workspaceId=${wsA}`);
       expect(rSelf.status).toBe(200);
     } finally {

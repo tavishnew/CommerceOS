@@ -93,8 +93,6 @@ async function requestProducts() {
   console.log();
   
   try {
-    // Step 1: Discover Agent 2 using A2A Protocol
-    // This is the standard A2A discovery mechanism
     console.log("📡 Step 1: Discovering Agent 2 (A2A Protocol)");
     console.log(`   GET ${AGENT_B_URL}/.well-known/agent.json`);
     
@@ -109,8 +107,6 @@ async function requestProducts() {
     }
     console.log();
     
-    // Step 2: Create A2A Client
-    // The client handles all JSON-RPC 2.0 communication with Agent 2
     console.log("📡 Step 2: Creating A2A Client");
     console.log("   The client will handle JSON-RPC 2.0 protocol");
     
@@ -118,16 +114,12 @@ async function requestProducts() {
     console.log("✅ A2A Client initialized");
     console.log();
     
-    // Step 3: Send product request via A2A Protocol
-    // Using tasks/send method (JSON-RPC 2.0)
     console.log("📤 Step 3: Sending Product Request (A2A Protocol)");
     console.log("   Method: tasks/send (JSON-RPC 2.0)");
     console.log("   Request: Get all products from inventory");
     
     const taskId = uuidv4();
     
-    // Send task with product request
-    // The message can be text or structured data (DataPart)
     const task = await client.sendTask({
       id: taskId,
       sessionId: SESSION_ID,
@@ -138,14 +130,6 @@ async function requestProducts() {
             type: 'text',
             text: 'Get all products from inventory'
           }
-          // Alternative: Could use structured data:
-          // {
-          //   type: 'data',
-          //   data: {
-          //     action: 'get_products',
-          //     filters: { category: 'all' }
-          //   }
-          // }
         ]
       }
     });
@@ -164,7 +148,6 @@ async function requestProducts() {
     // Agent 2 should return products in artifacts (structured outputs)
     console.log("📥 Step 4: Extracting Product Data");
     
-    // Check for artifacts first (structured tool outputs)
     const artifacts = extractArtifacts(task);
     
     if (artifacts.length > 0) {
@@ -205,7 +188,6 @@ async function requestProducts() {
         console.log("📝 Response Message:");
         console.log(responseText);
         
-        // Also check for data in message parts
         const messageData = extractDataFromMessage(responseMessage);
         if (messageData && messageData.products) {
           console.log("\n📦 Products in Message:");

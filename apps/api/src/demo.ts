@@ -34,11 +34,6 @@ export function resolveBuyerWorkspaceId(email: string | null | undefined): {
   if (isDemoAccountEmail(email)) {
     return { workspaceId: DEMO_BUYER_WORKSPACE_ID, isDemo: true };
   }
-  // Non-demo path. We could either accept a caller-supplied candidate
-  // (and trust it) or generate a server-side id. We choose to return a
-  // server-side id; the browser must persist whatever we say.
-  // (Idempotency is handled by the caller — we always return the same
-  // workspaceId for the same email within a session.)
   return { workspaceId: `ws_anon_${hashEmail(email)}`, isDemo: false };
 }
 
@@ -61,10 +56,6 @@ export const DEMO_MERCHANT_WORKSPACE = DEMO_MERCHANT_WORKSPACE_ID;
 /** Idempotently seed the demo buyer's workspace so the user lands on a
  *  populated view. Skips silently when the workspace already has rows. */
 export async function seedDemoDataIfEmpty(pool: pg.Pool): Promise<void> {
-  // Demo merchant workspace row in merchant_settings (so the merchant side
-  // sees a familiar dashboard on first load). After the 2026-09-03
-  // migration, the PK is `workspace_id`; we still populate the legacy
-  // `merchant_id` column for any read paths that still reference it.
   const { rowCount: mc } = await pool.query(
     `SELECT 1 FROM merchant_settings WHERE workspace_id = $1`,
     [DEMO_MERCHANT_WORKSPACE],
@@ -86,19 +77,12 @@ export async function seedDemoDataIfEmpty(pool: pg.Pool): Promise<void> {
     [DEMO_BUYER_WORKSPACE_ID],
   );
 
-  // Demo orders — only if the workspace has none. Idempotent: re-runs are
-  // a no-op once the workspace has any data.
   const { rowCount: oc } = await pool.query(
     `SELECT 1 FROM orders WHERE workspace_id = $1 LIMIT 1`,
     [DEMO_BUYER_WORKSPACE_ID],
   );
   if (oc && oc > 0) return;
 
-  // Look up a product to attach demo orders to. We prefer sku-pinned
-  // rows so the demo's two orders land on actual seeded items: the warm
-  // desk lamp (paid, under the auto-approve cap) and the premium lamp
-  // (pending_human_review, above the cap). Falls back to "first active
-  // product by id" if the lamp rows are missing for any reason.
   const { rows: paidProds } = await pool.query<{ id: number; price: number | string; name: string }>(
     `SELECT id, price, name FROM products WHERE sku = 'LP-WW-079' LIMIT 1`,
   );

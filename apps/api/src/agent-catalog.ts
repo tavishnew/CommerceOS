@@ -73,8 +73,6 @@ function categoryObject(productCategory: string | null): { id: string; path: str
 
 function deriveCapabilities(row: ProductRow): string[] {
   const caps: string[] = [];
-  // In_stock when availability is true OR we still have inventory. Out of
-  // stock when explicitly false OR status is out_of_stock OR qty is zero.
   if (row.availability && row.inventory_quantity > 0 && row.status !== 'out_of_stock') {
     caps.push('in_stock');
   } else {
@@ -86,9 +84,6 @@ function deriveCapabilities(row: ProductRow): string[] {
 }
 
 function defaultPolicyCeiling(): number {
-  // Today the merchant_settings cap lives per workspace; we hard-code the
-  // default to match seedDemoDataIfEmpty. A future read joins
-  // merchant_settings.max_auto_approve for the caller's merchant workspace.
   return 180.0;
 }
 
@@ -117,9 +112,6 @@ function projectProduct(row: ProductRow, policyCeiling: number): AgentProduct {
     capabilities: deriveCapabilities(row),
     negotiation: {
       negotiable: price >= 50,
-      // min_price is 80% of list. Demo-only: not stored on the product.
-      // Ponytail: inlined heuristic; promote to a real column when
-      // merchants ask for per-SKU floors.
       min_price: price >= 50 ? Math.round(price * 0.8 * 100) / 100 : null,
       currency: row.currency,
       // Bulk tiers: 5+ at 90%, 25+ at 75% — synthetic, deterministic.
@@ -168,9 +160,6 @@ function productHasAllCapabilities(p: AgentProduct, wanted: string[]): boolean {
 export interface AgentRouterDeps {
   pool: pg.Pool;
   merchantWorkspace: () => string;
-  // Returns the auto-approve ceiling for the merchant workspace. Today
-  // this is a hard-coded default; the function exists so a future
-  // caller can swap in a per-workspace lookup without touching this file.
   resolveAutoApproveCeiling: () => Promise<number>;
   writeAudit: (args: {
     transactionId: string | null;
@@ -186,6 +175,64 @@ export interface AgentRouterDeps {
 
 export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): void {
   const { pool, merchantWorkspace, writeAudit, newTxnId } = deps;
+
+  function callerMerchantWorkspace(req: express.Request): string {
+    const raw = req.header('x-merchant-workspace-id');
+    if (typeof raw === 'string' && raw.trim()) return raw.trim();
+    return merchantWorkspace();
+  }
+
+  app.get('/.well-known/agent.json', (_req, res) => {
+    res.json({
+      name: 'Commerce0S Seller Agent',
+      description:
+        'Catalog discovery, intent scoring, and seller-side price negotiation ' +
+        'for the Commerce0S demo merchant.',
+      url: '/',
+      version: AGENT_SCHEMA_VERSION,
+      capabilities: {
+        streaming: false,
+        push_notifications: false,
+        extended_agent_card: false,
+      },
+      default_input_modes: ['application/json'],
+      default_output_modes: ['application/json'],
+      skills: [
+        {
+          id: 'catalog.list',
+          name: 'List catalog',
+          description: 'GET /agent/catalog — filter by category, brand, price, qty, capability.',
+          tags: ['catalog', 'search'],
+          input_modes: ['application/json'],
+          output_modes: ['application/json'],
+        },
+        {
+          id: 'catalog.get',
+          name: 'Get product',
+          description: 'GET /agent/catalog/:sku — single product with negotiation + policy.',
+          tags: ['catalog', 'product'],
+          input_modes: ['application/json'],
+          output_modes: ['application/json'],
+        },
+        {
+          id: 'seller.negotiate',
+          name: 'Negotiate price',
+          description: 'POST /agent/seller/negotiate — accept / counter / reject a buyer offer.',
+          tags: ['negotiation', 'pricing'],
+          input_modes: ['application/json'],
+          output_modes: ['application/json'],
+        },
+        {
+          id: 'seller.intent',
+          name: 'Score intent',
+          description: 'POST /agent/seller/intent — rank catalog candidates for a buyer intent.',
+          tags: ['search', 'ranking'],
+          input_modes: ['application/json'],
+          output_modes: ['application/json'],
+        },
+      ],
+    });
+  });
 
   app.get('/agent/catalog', async (req, res) => {
     const q = req.query;
@@ -226,7 +273,11 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
     const whereSql = where.join(' AND ');
 
     try {
-      const countSql = `SELECT COUNT(*)::int AS total FROM products WHERE ${whereSql}`;
+      const ws = callerMerchantWorkspace(req);
+      params.push(ws);
+      const wsIdx = params.length;
+      const scopedWhere = `${whereSql} AND workspace_id = $${wsIdx}`;
+      const countSql = `SELECT COUNT(*)::int AS total FROM products WHERE ${scopedWhere}`;
       const { rows: countRows } = await pool.query<{ total: number }>(countSql, params);
       const total = countRows[0]?.total ?? 0;
 
@@ -234,7 +285,7 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       const listSql = `SELECT sku, name, description, price, currency, availability,
                               inventory_quantity, status, image_link, brand,
                               product_category, enable_search
-                       FROM products WHERE ${whereSql}
+                       FROM products WHERE ${scopedWhere}
                        ORDER BY sku LIMIT $${params.length - 1} OFFSET $${params.length}`;
       const { rows } = await pool.query<ProductRow>(listSql, params);
 
@@ -260,12 +311,14 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       return;
     }
     try {
+      const ws = callerMerchantWorkspace(req);
       const { rows } = await pool.query<ProductRow>(
         `SELECT sku, name, description, price, currency, availability,
                 inventory_quantity, status, image_link, brand,
                 product_category, enable_search
-         FROM products WHERE sku = $1 AND enable_search = TRUE`,
-        [sku],
+         FROM products WHERE sku = $1 AND enable_search = TRUE
+           AND workspace_id = $2`,
+        [sku, ws],
       );
       if (rows.length === 0) {
         agentErr(res, 404, 'NOT_FOUND', 'no such sku');
@@ -301,11 +354,13 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       return;
     }
     try {
+      const ws = callerMerchantWorkspace(req);
       const { rows: prodRows } = await pool.query<ProductRow>(
         `SELECT sku, name, price, currency, inventory_quantity, availability,
                 status, brand, product_category, image_link, description, enable_search
-         FROM products WHERE sku = $1 AND enable_search = TRUE`,
-        [sku],
+         FROM products WHERE sku = $1 AND enable_search = TRUE
+           AND workspace_id = $2`,
+        [sku, ws],
       );
       const product = prodRows[0];
       if (!product) {
@@ -410,14 +465,14 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       ? (constraints.capabilities as unknown[]).filter((c): c is string => typeof c === 'string')
       : [];
     try {
-      // Pull the full enabled set; scoring happens in JS so we can attach
-      // a per-candidate match_report. A future migration can move this to
-      // a SQL-side score for tables > 1k rows.
+      const ws = callerMerchantWorkspace(req);
       const { rows } = await pool.query<ProductRow>(
         `SELECT sku, name, description, price, currency, availability,
                 inventory_quantity, status, image_link, brand,
                 product_category, enable_search
-         FROM products WHERE enable_search = TRUE AND status != 'archived'`,
+         FROM products WHERE enable_search = TRUE AND status != 'archived'
+           AND workspace_id = $1`,
+        [ws],
       );
       let products = projectProducts(rows);
 
@@ -537,9 +592,6 @@ function scoreProduct(
     : p.price.amount <= parsed.price_ceiling ? 1.0 : 0.0;
   report['price_match'] = priceScore;
 
-  // Attribute match: count how many parsed hints are satisfied by the product.
-  // Today the product exposes only availability + status; future columns can
-  // contribute here. We treat unknown hints as satisfied (no penalty).
   const wantedAttrs = Object.keys(parsed.attribute_hints);
   let attrHits = 0;
   if (wantedAttrs.length === 0) {

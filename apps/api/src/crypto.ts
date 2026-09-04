@@ -1,9 +1,5 @@
 import crypto from 'crypto';
 
-// AES-256-GCM symmetric encryption for at-rest secrets.
-// The key is supplied by a single infra-level env var: ENCRYPTION_KEY.
-// Format we accept: either a 64-char hex string, or any string ≥ 32 chars
-// which we hash to 32 bytes. The hex form is preferred for clarity.
 
 const ALGO = 'aes-256-gcm';
 const IV_LEN = 12;

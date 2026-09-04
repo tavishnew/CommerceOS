@@ -4,9 +4,6 @@ import crypto from 'crypto';
 import type pg from 'pg';
 
 export interface RecordEvent {
-  // Either a pool or a pool client. Client is used when the event must
-  // commit atomically with another state change; the helper writes
-  // through whichever handle is supplied.
   pool: pg.Pool | pg.PoolClient;
   txnId?: string | null;
   workspaceId?: string | null;
@@ -25,8 +22,6 @@ export interface RecordEvent {
 }
 
 export function newTxnId(): string {
-  // 8 random bytes → 13-char base32 (no padding). No Math.random — uses
-  // node:crypto so the value is unpredictable across processes.
   return 'TXN-' + crypto.randomBytes(8).toString('base64url').toUpperCase();
 }
 

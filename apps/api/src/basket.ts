@@ -44,6 +44,7 @@ export class ProductMissing extends Error {
 async function loadActiveProduct(
   pool: Db,
   productId: number,
+  workspaceId: string,
 ): Promise<{ id: number; price: number; currency: string; name: string; inStock: boolean }> {
   const { rows } = await pool.query<{
     id: number;
@@ -55,8 +56,8 @@ async function loadActiveProduct(
     status: string;
   }>(
     `SELECT id, price, currency, name, availability, inventory_quantity, status
-     FROM products WHERE id = $1`,
-    [productId],
+     FROM products WHERE id = $1 AND workspace_id = $2`,
+    [productId, workspaceId],
   );
   if (rows.length === 0) throw new ProductMissing(productId);
   const r = rows[0];
@@ -80,8 +81,9 @@ export async function createBasket(
   pool: Db,
   workspaceId: string,
   productId: number,
+  merchantWorkspaceId: string,
 ): Promise<Basket> {
-  const product = await loadActiveProduct(pool, productId);
+  const product = await loadActiveProduct(pool, productId, merchantWorkspaceId);
   if (!product.inStock) throw new InventoryUnavailable(productId, 'unavailable');
 
   const id = 'bsk_' + crypto.randomBytes(8).toString('base64url');
@@ -110,6 +112,7 @@ export async function addToBasket(
   workspaceId: string,
   basketId: string,
   productId: number,
+  merchantWorkspaceId: string,
 ): Promise<Basket> {
   const { rows } = await pool.query<{ items: BasketItem[]; status: string; workspace_id: string }>(
     `SELECT items, status, workspace_id FROM baskets WHERE id = $1`,
@@ -119,7 +122,7 @@ export async function addToBasket(
   if (rows[0].workspace_id !== workspaceId) throw new BasketNotFound();
   if (rows[0].status !== 'open') throw new BasketClosed();
 
-  const product = await loadActiveProduct(pool, productId);
+  const product = await loadActiveProduct(pool, productId, merchantWorkspaceId);
   if (!product.inStock) throw new InventoryUnavailable(productId, 'unavailable');
 
   const existing = rows[0].items;

@@ -16,9 +16,6 @@ import { Role, A2AServer, DefaultA2ARequestHandler, OperationNotSupportedError, 
  * 5. Returns task with artifacts containing product data
  */
 
-// ACP Tool Configuration
-// ACP-compatible endpoint for product catalog
-// This endpoint returns Shopify product inventory in ACP format
 const ACP_TOOL_ENDPOINT = 'https://shopify.actory.ai/api/actory/catalog/acp-store-8881.myshopify.com';
 
 
@@ -52,7 +49,6 @@ class ACPToolClient {
     try {
       console.log(`   🔗 Calling ACP Tool: ${ACP_TOOL_ENDPOINT}`);
       
-      // Call ACP endpoint - it's a GET request that returns product catalog
       const response = await fetch(ACP_TOOL_ENDPOINT, {
         method: 'GET',
         headers: {
@@ -64,12 +60,9 @@ class ACPToolClient {
         throw new Error(`ACP endpoint error: ${response.status} ${response.statusText}`);
       }
       
-      // Parse ACP response
       const acpResponse = await response.json();
       console.log(`   ✅ ACP Tool Response: Received ${acpResponse.products?.length || 0} products`);
       
-      // Transform ACP/Shopify format to normalized format for Agent 1
-      // The ACP endpoint returns products in Shopify format, we normalize it
       const normalizedProducts = (acpResponse.products || []).map(product => ({
         id: product.id,
         sku: product.sku,
@@ -84,7 +77,6 @@ class ACPToolClient {
         tags: product.attributes?.tags || []
       }));
       
-      // Return normalized product data
       return {
         products: normalizedProducts,
         metadata: {
@@ -136,7 +128,6 @@ class ProductServiceExecutor {
         .map(part => part.text)
         .join('');
       
-      // Extract structured data if present (DataPart)
       const dataPart = message.parts.find(part => part.type === 'data');
       const structuredRequest = dataPart ? dataPart.data : null;
       
@@ -153,7 +144,6 @@ class ProductServiceExecutor {
         (structuredRequest && structuredRequest.action === 'get_products');
       
       if (!isProductRequest) {
-        // Not a product request, return error
         return {
           jsonrpc: '2.0',
           id: request.id,
@@ -164,18 +154,14 @@ class ProductServiceExecutor {
         };
       }
       
-      // Extract filters if provided in structured request
       const filters = structuredRequest?.filters || {};
       
       // Call ACP Tool to get product inventory
       console.log(`\n🔧 Step 1: Calling ACP Tool for product inventory`);
       const productData = await this.acpTool.getProducts(filters);
       
-      // Step 2: Transform ACP response into A2A Task format
-      // A2A Protocol uses artifacts to return structured tool outputs
       console.log(`\n🔧 Step 2: Transforming ACP response to A2A format`);
       
-      // Get or create task object
       const taskId = request.params.id;
       const sessionId = request.params.sessionId || null;
       
@@ -198,7 +184,6 @@ class ProductServiceExecutor {
       }
       taskObj.history.push(message);
       
-      // Create response message
       const agentMessage = {
         role: Role.Agent,
         parts: [
@@ -212,8 +197,6 @@ class ProductServiceExecutor {
       // Add agent response to history
       taskObj.history.push(agentMessage);
       
-      // Create artifact with product data
-      // Artifacts are how A2A Protocol returns structured tool outputs
       const productArtifact = {
         name: 'Product Inventory',
         description: 'Current inventory of available products',
@@ -237,8 +220,6 @@ class ProductServiceExecutor {
         timestamp: new Date().toISOString()
       };
       
-      // Add artifact to task
-      // This is the key part: artifacts contain the tool output
       taskObj.artifacts = [productArtifact];
       
       console.log(`\n✅ A2A Response Prepared`);
@@ -246,8 +227,6 @@ class ProductServiceExecutor {
       console.log(`   Artifacts: ${taskObj.artifacts.length}`);
       console.log(`   Products in Artifact: ${productData.products?.length || 0}`);
       
-      // Return JSON-RPC response with Task object
-      // The A2A SDK will handle JSON-RPC 2.0 formatting
       return {
         jsonrpc: '2.0',
         id: request.id,
@@ -257,7 +236,6 @@ class ProductServiceExecutor {
     } catch (error) {
       console.error(`\n❌ Error processing request: ${error.message}`);
       
-      // Return error response in JSON-RPC 2.0 format
       return {
         jsonrpc: '2.0',
         id: request.id,
@@ -274,8 +252,6 @@ class ProductServiceExecutor {
    * For now, we'll use the same logic as onMessageSend
    */
   async *onMessageStream(request, task) {
-    // For streaming, we can yield status updates as we process
-    // For simplicity, we'll process and return a single update
     
     const response = await this.onMessageSend(request, task);
     
@@ -387,18 +363,13 @@ class CustomRequestHandler extends DefaultA2ARequestHandler {
    * but Task objects use "id" property
    */
   async onMessageSend(request) {
-    // Call parent method to handle basic A2A protocol logic
     const response = await super.onMessageSend(request);
     
-    // Additionally save the task if response contains a Task object
-    // Task objects have "id" and "status" properties
     if ("result" in response &&
         response.result &&
         typeof response.result === "object" &&
         "id" in response.result &&
         "status" in response.result) {
-      // This is a Task object - save it to task store
-      // This allows Agent 1 to retrieve it later via tasks/get
       await this.taskStore.save(response.result);
     }
     
@@ -406,16 +377,8 @@ class CustomRequestHandler extends DefaultA2ARequestHandler {
   }
 }
 
-// Create the request handler with our executor
-// The executor implements the business logic (calling ACP tool)
-// The request handler manages A2A protocol concerns (task storage, JSON-RPC)
 const requestHandler = new CustomRequestHandler(new ProductServiceExecutor());
 
-// Create and start the A2A server
-// The server handles:
-// - Agent discovery (/.well-known/agent.json)
-// - JSON-RPC endpoint (POST /)
-// - Routes requests to the executor
 const server = new A2AServer(agentCard, requestHandler);
 
 const port = 3001;

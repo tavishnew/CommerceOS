@@ -138,8 +138,6 @@ describe('frontend startup: bootstrap flow', () => {
   });
 
   test('5. browser cannot claim isDemo — payload is rejected', async () => {
-    // The frontend never sends isDemo; this test asserts the server still
-    // rejects the field even if a malicious script tried to.
     const res = await fetch(`${BASE}/api/bootstrap`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -165,7 +163,6 @@ describe('frontend startup: bootstrap flow', () => {
     });
     const body = (await res.json()) as BootstrapResponse;
     expect(res.status).toBe(200);
-    // Server is authoritative — candidate is dropped, demo workspace is used.
     expect(body.workspaceId).toBe('ws_demo_buyer');
   });
 
@@ -176,8 +173,6 @@ describe('frontend startup: bootstrap flow', () => {
     const email = `iso-${crypto.randomBytes(4).toString('hex')}@example.com`;
     const ws = await bootstrapOnce(ls, email);
 
-    // Attempt to fetch the demo workspace's orders using a foreign workspaceId.
-    // (Direct DB query is the test's only honest way to assert isolation.)
     const { default: pg } = await import('pg');
     const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL ?? 'postgres://commerce:commerce@localhost:5432/commerce0s' });
     const { rows } = await pool.query<{ count: string }>(
@@ -189,8 +184,6 @@ describe('frontend startup: bootstrap flow', () => {
   });
 
   test('7. no duplicate demo seed rows after multiple bootstrap calls', async () => {
-    // The server's seedDemoDataIfEmpty is idempotent. Several reloads of the
-    // demo email must not multiply the seeded rows.
     for (let i = 0; i < 3; i++) {
       const r = await fetch(`${BASE}/api/bootstrap`, {
         method: 'POST',

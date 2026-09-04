@@ -78,8 +78,6 @@ describe('bootstrap: demo account', () => {
       { email: 'tavish350@gmail.com', candidateWorkspaceId: 'ws_injected' },
     );
     expect(r.status).toBe(200);
-    // Browser cannot land on the demo workspace by sending its own id —
-    // but it also cannot AVOID the demo workspace by sending a foreign id.
     expect(r.body.workspaceId).toBe('ws_demo_buyer');
   });
 });

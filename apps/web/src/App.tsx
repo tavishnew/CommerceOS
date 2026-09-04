@@ -6,11 +6,6 @@ import type { CSSProperties } from 'react';
 
 type Icon = typeof HI.Search01Icon;
 
-// Build a lucide-style component (<Foo size={n} className=... style=... />)
-// around a Hugeicons icon. We only forward props we know are safe — the
-// Hugeicons `strokeWidth` prop is number-only, so we don't spread arbitrary
-// SVG attributes (lucide-react's components take a wider set, but the
-// App.tsx call sites use only size/className/style/strokeWidth).
 function compat(Icon: Icon) {
   return function LucideCompat({
     size,
@@ -68,8 +63,6 @@ const Radio = compat(HI.RadioIcon);
 const RefreshCw = compat(HI.Refresh01Icon);
 const Search = compat(HI.Search01Icon);
 const Send = compat(HI.SentIcon);
-// Renamed: `Settings` collides with the Settings React component below. The
-// lucide alias was `Settings as SettingsIcon`; we keep the same local name.
 const SettingsIcon = compat(HI.Settings01Icon);
 const ShieldCheck = compat(HI.Shield01Icon);
 const ShoppingBag = compat(HI.ShoppingBag01Icon);
@@ -208,6 +201,9 @@ const navBuyer = [
   { href: '/buyer/settings', label: 'Settings', icon: SettingsIcon },
 ];
 
+const MONO_LABEL = 'font-mono-ui text-[10px] uppercase tracking-[.12em]';
+const MONO_MUTED = `${MONO_LABEL} text-muted-foreground`;
+
 function outcomeColor(o: string): string {
   if (o === 'success' || o === 'auto_approved' || o === 'approved' || o === 'recovered')
     return 'text-positive';
@@ -315,8 +311,8 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
   const [, setLocation] = useLocation();
   const { isDemo } = useWorkspace();
   const { data: liveRows = [] } = useQuery<ActivityRow[]>({
-    queryKey: ['activity', 'landing', isDemo],
-    queryFn: () => fetchActivity(4, undefined, isDemo),
+    queryKey: ['activity', 'landing'],
+    queryFn: () => fetchActivity(4, undefined, { publicView: true }),
     refetchInterval: 4000,
   });
   return (
@@ -582,7 +578,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
               ))}
               <div className="scanline absolute left-[10%] right-[10%] top-[49%] h-px opacity-40" />
             </div>
-            <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+            <div className="absolute bottom-5 left-5 right-5 flex items-end justify-between MONO_MUTED">
               <span>agents negotiate in public</span>
               <span>latency 42ms · encrypted</span>
             </div>
@@ -760,7 +756,7 @@ function Landing({ theme, onToggle }: { theme: Theme; onToggle: () => void }) {
 
         <footer className="mx-auto flex max-w-[1240px] flex-col gap-8 px-5 py-12 sm:flex-row sm:items-center sm:justify-between sm:px-8 lg:px-10">
           <Logo />
-          <div className="flex items-center gap-5 font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+          <div className="flex items-center gap-5 MONO_MUTED">
             <span>Built for the agent economy</span>
             <button
               onClick={() => setLocation('/auth')}
@@ -795,7 +791,7 @@ function Auth({
       <header className="flex items-center justify-between px-5 py-5 sm:px-8">
         <Logo />
         <div className="flex items-center gap-3">
-          <span className="hidden font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground sm:inline">
+          <span className="hidden MONO_MUTED sm:inline">
             secure access
           </span>
           <ThemeToggle theme={theme} onToggle={onToggle} />
@@ -909,15 +905,10 @@ function Auth({
           <Button
             onClick={() => {
               setSubmitted(true);
-              // Persist the email and clear any stale workspace id so the
-              // next bootstrap call mints a fresh candidate workspace for
-              // the new email. Without this, the email entered here was
-              // dropped on the floor and the user kept landing on the
-              // previous (or demo) workspace — which is what surfaced as
-              // "demo data after creating a new workspace".
               setStoredBuyerEmail(email.trim() ? email.trim() : null);
               try {
                 localStorage.removeItem('commerce0s.buyerWorkspaceId');
+                localStorage.removeItem('commerce0s.merchantWorkspaceId');
                 localStorage.removeItem('commerce0s.buyerBootstrapped');
               } catch {
                 /* localStorage unavailable */
@@ -1066,7 +1057,7 @@ function Topbar({
         >
           <Menu size={17} aria-hidden="true" />
         </button>
-        <div className="hidden items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground sm:flex">
+        <div className="hidden items-center gap-2 MONO_MUTED sm:flex">
           <span className="text-foreground">
             {role === 'merchant' ? 'Almond Studio' : 'Northstar Agent'}
           </span>
@@ -1151,42 +1142,24 @@ function MetricCard({
   icon: typeof Activity;
   signal?: boolean;
 }) {
+  const cardShell = signal
+    ? 'border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10'
+    : 'border-foreground/10 bg-card';
+  const iconTone = signal ? 'text-foreground' : 'text-muted-foreground';
   return (
-    <div
-      className={cn(
-        'select-none rounded-2xl border p-5',
-        signal
-          ? 'border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10'
-          : 'border-foreground/10 bg-card',
-      )}
+    <article
+      data-testid="metric-card"
+      className={cn('flex flex-col gap-6 rounded-2xl border p-5 select-none', cardShell)}
     >
-      <div className="flex items-center justify-between">
-        <span className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
-          {label}
-        </span>
-        <Icon
-          size={16}
-          className={
-            signal
-              ? 'text-foreground'
-              : 'text-muted-foreground'
-          }
-        />
-      </div>
-      <div className="mt-6 flex items-end justify-between gap-3">
+      <header className="flex items-center justify-between">
+        <span className={MONO_MUTED}>{label}</span>
+        <Icon size={16} className={iconTone} />
+      </header>
+      <div className="flex items-end justify-between gap-3">
         <strong className="font-display text-3xl font-bold tracking-[-.06em]">{value}</strong>
-        <span
-          className={cn(
-            'font-mono-ui text-[10px]',
-            signal
-              ? 'text-foreground'
-              : 'text-muted-foreground',
-          )}
-        >
-          {delta}
-        </span>
+        <span className={cn('text-[10px] font-mono-ui', iconTone)}>{delta}</span>
       </div>
-    </div>
+    </article>
   );
 }
 
@@ -1266,7 +1239,7 @@ function MerchantOverview() {
             <div className="min-w-0 select-none rounded-2xl border border-foreground/10 bg-card p-5">
               <div className="flex min-w-0 items-start justify-between gap-3">
                 <div className="min-w-0 select-none">
-                  <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                  <p className={MONO_MUTED}>
                     Decision mix
                   </p>
                   <h3 className="mt-2 font-display text-xl font-bold">
@@ -1309,7 +1282,7 @@ function MerchantOverview() {
           <ActivityPanel />
           <div className="min-w-0 rounded-2xl border border-foreground/10 bg-card p-5">
             <div className="select-none">
-              <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+              <p className={MONO_MUTED}>
                 Next steps
               </p>
               <h3 className="mt-2 font-display text-xl font-bold">Set up your workspace</h3>
@@ -1416,7 +1389,7 @@ function ActivityPanel() {
   const { isDemo } = useWorkspace();
   const { data: rows = [], isLoading, isError, dataUpdatedAt } = useQuery<ActivityRow[]>({
     queryKey: ['activity', 'overview', isDemo],
-    queryFn: () => fetchActivity(6, undefined, isDemo),
+    queryFn: () => fetchActivity(6),
     refetchInterval: 3000,
   });
 
@@ -1424,7 +1397,7 @@ function ActivityPanel() {
     <div className="rounded-2xl border border-foreground/10 bg-card p-5">
       <div className="flex items-center justify-between">
         <div>
-          <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+          <p className={MONO_MUTED}>
             Live protocol trail
           </p>
           <h3 className="mt-2 font-display text-xl font-bold">Agent activity</h3>
@@ -1487,7 +1460,7 @@ function ActivityPanel() {
         </span>
         <button
           onClick={() => setLocation('/merchant/activity')}
-          className="flex items-center gap-1 font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground hover:text-foreground"
+          className="flex items-center gap-1 MONO_MUTED hover:text-foreground"
           data-testid="button-view-all-activity"
         >
           View full activity <ArrowRight size={12} />
@@ -1627,10 +1600,18 @@ function Catalog() {
         {!isLoading && !error && visible.length === 0 && products.length === 0 && (
           <div className="grid place-items-center px-6 py-20 text-center">
             <Box size={26} className="text-muted-foreground" />
-            <p className="mt-4 font-display text-xl font-bold">No products yet — add one</p>
+            <p className="mt-4 font-display text-xl font-bold">No products yet — add your first one</p>
             <p className="mt-2 text-sm text-muted-foreground">
-              Your catalog is empty. Add your first product to get started.
+              Your catalog is empty. Add a product to get started.
             </p>
+            <div className="mt-5">
+              <ButtonArrow
+                onClick={() => setModal('new')}
+                testId="button-add-first-product"
+              >
+                <Plus size={15} /> Add product
+              </ButtonArrow>
+            </div>
           </div>
         )}
 
@@ -2252,8 +2233,6 @@ function MerchantOrderDetailDrawer({
   }>({
     queryKey: ['order', orderId],
     queryFn: async () => {
-      // fetchOrder returns plain Order; we attach the structured policy if
-      // the server included it in the future. For now we just return the row.
       const order = await fetchOrder(orderId!);
       return { order };
     },
@@ -2343,7 +2322,7 @@ function MerchantOrderDetailDrawer({
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                <p className={MONO_MUTED}>
                   order
                 </p>
                 <h2 className="mt-1 font-display text-xl font-bold">
@@ -2404,7 +2383,7 @@ function MerchantOrderDetailDrawer({
                   order.razorpay_refund_id ||
                   order.transaction_id) && (
                   <div className="rounded-xl border border-foreground/10 bg-card p-4">
-                    <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                    <p className={MONO_MUTED}>
                       settlement
                     </p>
                     <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono-ui text-[10px]">
@@ -2450,7 +2429,7 @@ function MerchantOrderDetailDrawer({
                 )}
                 {(order.status === 'paid' || order.status === 'shipped') && (
                   <div className="rounded-xl border border-foreground/10 bg-card p-4">
-                    <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                    <p className={MONO_MUTED}>
                       actions
                     </p>
                     <div className="mt-3 space-y-3">
@@ -2573,7 +2552,7 @@ function AuditRow({
               )}
               <div className="space-y-3">
                 <div>
-                  <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                  <p className={MONO_MUTED}>
                     metadata
                   </p>
                   <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono-ui text-[10px]">
@@ -2874,7 +2853,7 @@ function ActivityPage({ audit = false }: { audit?: boolean }) {
           <div className="grid gap-8 lg:grid-cols-[1.05fr_.95fr]">
             <div>
               <div className="flex items-center justify-between border-b border-foreground/10 pb-4">
-                <span className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                <span className={MONO_MUTED}>
                   event stream
                 </span>
                 <div className="flex items-center gap-2">
@@ -2969,7 +2948,7 @@ function PolicyDecisionCard({
   transactionId?: string | null;
   compact?: boolean;
 }) {
-  if (!policy) {
+  if (!policy || !policy.buyer || !policy.merchant) {
     return (
       <div className="rounded-xl border border-foreground/10 bg-muted/40 p-4 text-xs text-muted-foreground">
         Policy not recorded for this event.
@@ -2985,7 +2964,7 @@ function PolicyDecisionCard({
       data-testid="policy-decision-card"
     >
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+        <div className="flex items-center gap-2 MONO_MUTED">
           <ShieldCheck size={14} /> authorization decision
         </div>
         {transactionId && (
@@ -3143,7 +3122,7 @@ function TransactionDetailDrawer({
           >
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                <p className={MONO_MUTED}>
                   transaction
                 </p>
                 <h2 className="mt-1 font-display text-xl font-bold">{txnId}</h2>
@@ -3170,7 +3149,7 @@ function TransactionDetailDrawer({
             {data && (
               <div className="mt-6 space-y-5">
                 <div>
-                  <h3 className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                  <h3 className={MONO_MUTED}>
                     orders
                   </h3>
                   {(data.orders?.length ?? 0) === 0 && (
@@ -3229,7 +3208,7 @@ function TransactionDetailDrawer({
                   ))}
                 </div>
                 <div>
-                  <h3 className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                  <h3 className={MONO_MUTED}>
                     audit events ({data.audit?.length ?? 0})
                   </h3>
                   <div className="mt-2 space-y-1">
@@ -3366,7 +3345,6 @@ function Settings() {
   const [requireHuman, setRequireHuman] = useState(true);
   const [saved, setSaved] = useState(false);
 
-  // Sync local state when settings load
   useEffect(() => {
     if (settings) {
       setMaxCap(String(settings.maxAutoApprove));
@@ -3553,7 +3531,6 @@ function PaymentGatewaySection() {
         keySecret: keySecret.trim(),
         webhookSecret: webhookSecret.trim(),
       });
-      // Clear the secret inputs after a successful save — they are write-only.
       setKeySecret('');
       setWebhookSecret('');
       setShowSecrets(false);
@@ -3783,7 +3760,7 @@ function PaymentGatewaySection() {
             {configured && !showSecrets && (
               <button
                 onClick={() => setShowSecrets(true)}
-                className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground underline underline-offset-4 hover:text-foreground"
+                className={cn(MONO_MUTED, 'underline underline-offset-4 hover:text-foreground')}
                 data-testid="button-rotate-razorpay-secrets"
               >
                 Replace secrets
@@ -4015,9 +3992,6 @@ function BuyerOrderCard({ order }: { order: Order }) {
 
   const canDispute = order.status === 'paid' || order.status === 'shipped';
 
-  // Fetch the matching audit events for this order's transaction so the
-  // user can see why the agent picked it. Falls back to "no trace" if the
-  // backend hasn't recorded one.
   const trace = useQuery<TransactionDetail>({
     queryKey: ['transaction', order.transaction_id],
     queryFn: () => fetchTransactionDetail(order.transaction_id ?? ''),
@@ -4099,7 +4073,7 @@ function BuyerOrderCard({ order }: { order: Order }) {
           >
             <div className="grid gap-5 p-5 md:grid-cols-[1.1fr_.9fr]">
               <div>
-                <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                <p className={MONO_MUTED}>
                   why this pick
                 </p>
                 {!order.transaction_id && (
@@ -4136,7 +4110,7 @@ function BuyerOrderCard({ order }: { order: Order }) {
               </div>
               {canDispute ? (
                 <div>
-                  <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                  <p className={MONO_MUTED}>
                     flag this order
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
@@ -4658,7 +4632,7 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
           <div className="rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
             <div className="flex items-center justify-between">
               <div>
-                <p className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+                <p className={MONO_MUTED}>
                   Current policy
                 </p>
                 <h3 className="mt-2 font-display text-xl font-bold">Northstar boundaries</h3>
@@ -4755,7 +4729,6 @@ function Trace({
     navigator.clipboard.writeText(evidenceLines).catch(() => {});
   };
 
-  // Helper: determine step visual style
   const stepStyle = (
     label: string,
   ): { borderClass: string; dotClass: string; icon?: ReactNode } => {
@@ -4782,7 +4755,7 @@ function Trace({
     <div className="grid gap-4 lg:grid-cols-[1.1fr_.9fr]">
       <div className="rounded-2xl border border-foreground/10 bg-card p-5 sm:p-7">
         <div className="flex items-center justify-between border-b border-foreground/10 pb-5">
-          <span className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-muted-foreground">
+          <span className={MONO_MUTED}>
             {sessionId ?? 'trace_awaiting'}
           </span>
           <div className="flex items-center gap-2">
@@ -4935,10 +4908,6 @@ function Checkout({
         name: 'Commerce0S',
         description: `Test payment — ${name}`,
         handler: async (_response) => {
-          // Payment modal closed successfully — webhook may still be in
-          // flight. We poll the server's order state and only mark approved
-          // when the DB reflects 'paid'. Timeouts stay in pending state
-          // rather than faking success.
           let attempts = 0;
           const maxAttempts = 10;
           while (attempts < maxAttempts) {

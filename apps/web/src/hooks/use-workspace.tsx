@@ -64,8 +64,6 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
           workspaceId: res.workspaceId,
           merchantWorkspaceId: res.merchantWorkspaceId,
           email: res.email,
-          // Cross-check: client mirror of server's isDemo. Authorization is
-          // always enforced server-side; this flag is only for UI affordances.
           isDemo: isDemoAccount(res.email) || res.isDemo,
           status: 'ready',
           error: null,

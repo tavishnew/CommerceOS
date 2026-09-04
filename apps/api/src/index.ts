@@ -43,10 +43,6 @@ declare global {
 }
 
 const app = express();
-// CORS allowlist — strict, no wildcards. Add a shared frontend origin via
-// FRONTEND_ORIGIN (or several via the comma-separated CORS_EXTRA_ORIGINS) when
-// exposing the API through ngrok. CORS for credentials / authorization-bearing
-// requests MUST be allowlist-based.
 const CORS_ALLOWED_ORIGINS: Set<string> = new Set([
   'http://localhost:5173',
   'http://127.0.0.1:5173',
@@ -80,12 +76,9 @@ app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Origin', origin as string);
       res.setHeader('Vary', 'Origin, Access-Control-Request-Headers');
       res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Razorpay-Signature');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Razorpay-Signature, X-Merchant-Workspace-Id');
       res.setHeader('Access-Control-Max-Age', '600');
     }
-    // 204 even when origin is not allowed — the browser will reject the
-    // preflight before the user code runs. We do NOT echo an arbitrary
-    // origin (that would be `Access-Control-Allow-Origin: *` by another name).
     res.status(204).end();
     return;
   }
@@ -95,12 +88,6 @@ app.use((req, res, next) => {
   }
   next();
 });
-// `cors` is left in place for any route that wants to inspect req.ip or set
-// Vary, but its origin-list logic is bypassed by the preflight handler above.
-// We disable it rather than dual-authorize: an `origin: true` cors() would
-// re-add the wildcard fallback on non-preflight requests and defeat the
-// allowlist. Instead, expose cors() as a no-op for non-OPTIONS via a stub:
-// (intentionally NOT calling cors() at all.)
 
 // Webhook: raw body capture before express.json() so HMAC sees signed bytes.
 app.post(
@@ -280,8 +267,6 @@ async function ensureOrdersTable(): Promise<void> {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_orders_ws_ts ON orders(workspace_id, created_at DESC)`,
   );
-  // One order per basket. Partial unique index — NULL basket_id rows
-  // (legacy / non-basket-created orders) don't conflict.
   await pool.query(
     `CREATE UNIQUE INDEX IF NOT EXISTS uniq_orders_basket_id
      ON orders(basket_id) WHERE basket_id IS NOT NULL`,
@@ -465,8 +450,8 @@ async function seedProductsIfEmpty(): Promise<void> {
     await pool.query(
       `INSERT INTO products
          (sku, name, description, price, currency, availability,
-          inventory_quantity, status, brand, product_category, image_link, enable_search)
-       VALUES ($1,$2,$3,$4,'USD',$5,$6,$7,$8,$9,$10,$11)
+          inventory_quantity, status, brand, product_category, image_link, enable_search, workspace_id)
+       VALUES ($1,$2,$3,$4,'USD',$5,$6,$7,$8,$9,$10,$11,$12)
        ON CONFLICT (sku) DO UPDATE SET
          name              = EXCLUDED.name,
          description       = EXCLUDED.description,
@@ -478,10 +463,11 @@ async function seedProductsIfEmpty(): Promise<void> {
          product_category  = EXCLUDED.product_category,
          image_link        = EXCLUDED.image_link,
          enable_search     = EXCLUDED.enable_search,
+         workspace_id      = EXCLUDED.workspace_id,
          updated_at        = NOW()`,
       [r.sku, r.name, r.description, r.price, r.availability,
        r.inventory_quantity, r.status, r.brand, r.product_category,
-       r.image_link, r.enable_search],
+       r.image_link, r.enable_search, DEMO_MERCHANT_WORKSPACE],
     );
   }
 }
@@ -507,7 +493,8 @@ interface ResolvedRazorpayCreds {
 async function ensureMerchantCredentialsTable(): Promise<void> {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS merchant_credentials (
-      merchant_id                    TEXT PRIMARY KEY DEFAULT 'default',
+      merchant_id                    TEXT DEFAULT 'default',
+      workspace_id                   TEXT NOT NULL PRIMARY KEY,
       razorpay_key_id                TEXT NOT NULL,
       razorpay_key_secret_encrypted  TEXT NOT NULL,
       razorpay_webhook_secret_encrypted TEXT NOT NULL,
@@ -615,14 +602,6 @@ const checkoutLimiter = createRateLimiter({ windowMs: 60_000, max: RATE_LIMIT_DI
 
 // ── Routes ──
 
-// POST /api/bootstrap — initial handshake. The browser sends an optional
-// email and a candidate workspaceId. The server decides what to return:
-//   - if the email matches the configured demo account, the caller is
-//     bound to the demo buyer workspace and the demo merchant workspace
-//   - otherwise the caller gets a server-derived anon workspaceId
-// The browser-sent isDemo flag is NEVER accepted — only the email
-// determines the demo split. Idempotent: calling twice with the same
-// email returns the same workspaceId.
 app.post('/api/bootstrap', async (req, res) => {
   // Reject any browser attempt to self-assign the demo flag.
   if (req.body && (req.body.isDemo === true || typeof req.body.isDemo === 'string')) {
@@ -639,8 +618,16 @@ app.post('/api/bootstrap', async (req, res) => {
 
   const { workspaceId, isDemo } = resolveBuyerWorkspaceId(email);
 
-  // Idempotently ensure the buyer session row exists so the rest of the
-  // /api/buyer/* flow has something to read on the very first call.
+  // Per-caller merchant workspace. The demo account gets the seeded
+  // `ws_demo_merchant`; every other email gets a stable `ws_live_<hash>`
+  // derived from the email so the same browser always lands on the same
+  // merchant workspace. The browser echoes this back via the
+  // `X-Merchant-Workspace-Id` header on subsequent calls — see
+  // `merchantWorkspaceFor(req)`.
+  const merchantWorkspaceId = isDemo
+    ? DEMO_MERCHANT_WORKSPACE
+    : `ws_live_${hashEmailForMerchant(email)}`;
+
   try {
     await pool.query(
       `INSERT INTO buyer_sessions (workspace_id, max_spend, autonomy)
@@ -656,11 +643,10 @@ app.post('/api/bootstrap', async (req, res) => {
     workspaceId,
     isDemo,
     email: email ?? null,
-    merchantWorkspaceId: isDemo ? DEMO_MERCHANT_WORKSPACE : DEFAULT_MERCHANT_WORKSPACE_ID,
+    merchantWorkspaceId,
   });
 });
 
-// Health check — pings both FastAPI services
 app.get('/api/health', async (_req, res) => {
   const supplierUrl = process.env.SUPPLIER_URL ?? 'http://localhost:8080';
   const retailerUrl = process.env.RETAILER_URL ?? 'http://localhost:8082';
@@ -683,13 +669,16 @@ app.get('/api/health', async (_req, res) => {
 });
 
 // List catalog
-app.get('/api/catalog', async (_req, res) => {
+app.get('/api/catalog', async (req, res) => {
+  const workspaceId = merchantWorkspaceFor(req);
   try {
     const { rows } = await pool.query<ProductRow>(
       `SELECT ${CATALOG_COLS}
        FROM products
        WHERE enable_search = TRUE
+         AND workspace_id = $1
        ORDER BY id`,
+      [workspaceId],
     );
     res.json(rows.map(normalizeProduct));
   } catch (err) {
@@ -707,13 +696,15 @@ app.get('/api/catalog/:id', async (req, res) => {
     res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'Invalid product id.' } });
     return;
   }
+  const workspaceId = merchantWorkspaceFor(req);
 
   try {
     const { rows } = await pool.query<ProductRow>(
       `SELECT ${CATALOG_COLS}
        FROM products
-       WHERE id = $1`,
-      [id],
+       WHERE id = $1
+         AND workspace_id = $2`,
+      [id, workspaceId],
     );
 
     if (rows.length === 0) {
@@ -747,15 +738,16 @@ app.post('/api/catalog', async (req, res) => {
     return;
   }
   const stockNum = stock != null ? Number(stock) : 0;
+  const workspaceId = merchantWorkspaceFor(req);
   try {
     const { rows } = await pool.query<ProductRow>(
       `INSERT INTO products
-         (sku, name, description, price, currency, availability, inventory_quantity, status)
-       VALUES ($1, $2, '', $3, 'INR', $4 > 0, $4, 'active')
+         (sku, name, description, price, currency, availability, inventory_quantity, status, workspace_id)
+       VALUES ($1, $2, '', $3, 'INR', $4 > 0, $4, 'active', $5)
        RETURNING id, sku, name, description, price, currency,
                  availability, inventory_quantity, status, created_at,
                  image_link, brand, product_category`,
-      [sku.trim(), name.trim(), Number(price), stockNum],
+      [sku.trim(), name.trim(), Number(price), stockNum, workspaceId],
     );
     res.status(201).json(normalizeProduct(rows[0]));
   } catch (err) {
@@ -823,8 +815,12 @@ app.delete('/api/catalog/:id', async (req, res) => {
     return;
   }
 
+  const workspaceId = merchantWorkspaceFor(req);
   try {
-    const { rowCount } = await pool.query('DELETE FROM products WHERE id = $1', [id]);
+    const { rowCount } = await pool.query(
+      'DELETE FROM products WHERE id = $1 AND workspace_id = $2',
+      [id, workspaceId],
+    );
     if (rowCount === 0) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Product not found.' } });
       return;
@@ -840,7 +836,7 @@ app.delete('/api/catalog/:id', async (req, res) => {
 
 // List orders; ?workspaceId= scopes to buyer workspace.
 app.get('/api/orders', async (req, res) => {
-  const workspaceId = (req.query.workspaceId as string | undefined)?.trim() || merchantWorkspace();
+  const workspaceId = (req.query.workspaceId as string | undefined)?.trim() || merchantWorkspaceFor(req);
   try {
     const { rows } = await pool.query(
       `SELECT o.id, o.product_id, o.buyer_agent_id, o.amount, o.currency, o.status, o.created_at,
@@ -898,9 +894,7 @@ app.get('/api/orders/:id', async (req, res) => {
       return;
     }
     const row = rows[0];
-    // Workspace isolation: caller must supply matching workspaceId (or default merchant).
-    // Same response as not-found — never leak existence across workspaces.
-    if (workspaceId && row.workspace_id !== workspaceId && row.workspace_id !== merchantWorkspace()) {
+    if (workspaceId && row.workspace_id !== workspaceId && row.workspace_id !== merchantWorkspaceFor(req)) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Order not found.' } });
       return;
     }
@@ -1049,7 +1043,7 @@ app.post('/api/baskets', async (req, res) => {
   }
   try {
     const basket = await withTransaction(async (client) => {
-      const b = await createBasket(client, workspaceId, productId);
+      const b = await createBasket(client, workspaceId, productId, merchantWorkspaceFor(req));
       await client.query(
         `INSERT INTO audit_log
            (transaction_id, workspace_id, actor, action, detail, amount, outcome)
@@ -1088,7 +1082,7 @@ app.post('/api/baskets/:id/items', async (req, res) => {
   }
   try {
     const basket = await withTransaction(async (client) => {
-      const b = await addToBasket(client, workspaceId, basketId, productId);
+      const b = await addToBasket(client, workspaceId, basketId, productId, merchantWorkspaceFor(req));
       await client.query(
         `INSERT INTO audit_log
            (transaction_id, workspace_id, actor, action, detail, amount, outcome)
@@ -1120,7 +1114,6 @@ app.post('/api/baskets/:id/items', async (req, res) => {
   }
 });
 
-// Reload basket.
 app.get('/api/baskets/:id', async (req, res) => {
   const basketId = String(req.params.id);
   const workspaceId = String(req.query.workspaceId ?? '').trim();
@@ -1143,7 +1136,6 @@ app.get('/api/baskets/:id', async (req, res) => {
 
 // ── Buyer session ──
 
-// GET /api/buyer/session?workspaceId=...
 app.get('/api/buyer/session', async (req, res) => {
   const workspaceId = String(req.query.workspaceId ?? '').trim();
   if (!workspaceId) {
@@ -1223,7 +1215,6 @@ app.put('/api/buyer/session', async (req, res) => {
   }
 });
 
-// GET /api/buyer/orders?workspaceId=...
 app.get('/api/buyer/orders', async (req, res) => {
   const workspaceId = String(req.query.workspaceId ?? '').trim();
   if (!workspaceId) {
@@ -1249,8 +1240,6 @@ app.get('/api/buyer/orders', async (req, res) => {
   }
 });
 
-// GET /api/transactions/:txn — single transaction detail (all rows + order).
-// workspaceId query param required; must match at least one order's workspace.
 app.get('/api/transactions/:txn', async (req, res) => {
   const txnId = String(req.params.txn);
   const workspaceId = (req.query.workspaceId as string | undefined)?.trim();
@@ -1265,10 +1254,8 @@ app.get('/api/transactions/:txn', async (req, res) => {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Transaction not found.' } });
       return;
     }
-    // Workspace isolation: caller workspace must match the order owner workspace.
-    // Default merchant workspace may read any (admin/operator view).
     const ownerWs = orders[0].workspace_id;
-    const callerIsMerchant = !workspaceId || workspaceId === merchantWorkspace();
+    const callerIsMerchant = !workspaceId || workspaceId === merchantWorkspaceFor(req);
     if (!callerIsMerchant && ownerWs !== workspaceId) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Transaction not found.' } });
       return;
@@ -1285,42 +1272,30 @@ app.get('/api/transactions/:txn', async (req, res) => {
   }
 });
 
-// GET /api/activity — recent audit rows scoped to merchant workspace(s).
-// When no explicit workspaceId is supplied we return rows for the
-// caller's merchant workspace. The `isDemo` query flag (set by the
-// client from /api/bootstrap's response) controls whether the demo
-// merchant workspace is included. Non-demo callers get only their own
-// merchant-side rows; demo callers get the union of the live merchant
-// workspace and the demo one. The demo buyer workspace is excluded —
-// that is the buyer-side trail and is shown on the buyer pages.
+// GET /api/activity — recent audit rows scoped to the caller's merchant
+// workspace. The caller's workspace comes from the X-Merchant-Workspace-Id
+// header that /api/bootstrap hands out, so demo callers land on
+// `ws_demo_merchant` and non-demo callers land on their own
+// `ws_live_<hash>`. Callers with no header (public landing visitors, the
+// buyer-side pages before bootstrap) get the demo merchant's public trail
+// so the activity panel still renders something. An explicit `?workspaceId=`
+// overrides both for the merchant dashboard, which already knows its id.
 app.get('/api/activity', async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 12, 100);
   const explicit = (req.query.workspaceId as string | undefined)?.trim();
-  const isDemo = String(req.query.isDemo ?? '').toLowerCase() === 'true';
+  const rawHeader = req.headers['x-merchant-workspace-id'];
+  const hasHeader = typeof rawHeader === 'string' && rawHeader.trim().length > 0;
+  const callerWorkspace = explicit
+    || (hasHeader ? (rawHeader as string).trim() : DEMO_MERCHANT_WORKSPACE);
   try {
-    let rows;
-    if (explicit) {
-      ({ rows } = await pool.query(
-        `SELECT id, timestamp, actor, action, detail, amount, outcome
-         FROM audit_log
-         WHERE workspace_id = $1
-         ORDER BY timestamp DESC
-         LIMIT $2`,
-        [explicit, limit],
-      ));
-    } else {
-      const workspaces = isDemo
-        ? [DEFAULT_MERCHANT_WORKSPACE_ID, DEMO_MERCHANT_WORKSPACE]
-        : [DEFAULT_MERCHANT_WORKSPACE_ID];
-      ({ rows } = await pool.query(
-        `SELECT id, timestamp, actor, action, detail, amount, outcome
-         FROM audit_log
-         WHERE workspace_id = ANY($1::text[])
-         ORDER BY timestamp DESC
-         LIMIT $2`,
-        [workspaces, limit],
-      ));
-    }
+    const { rows } = await pool.query(
+      `SELECT id, timestamp, actor, action, detail, amount, outcome
+       FROM audit_log
+       WHERE workspace_id = $1
+       ORDER BY timestamp DESC
+       LIMIT $2`,
+      [callerWorkspace, limit],
+    );
     res.json(rows);
   } catch (err) {
     console.error('GET /api/activity error:', err);
@@ -1330,8 +1305,6 @@ app.get('/api/activity', async (req, res) => {
 
 // ── Basket → order flow (replaces old POST /api/checkout/create-order) ───
 
-// POST /api/checkout/start — takes basket, runs policy, creates order.
-// `approved` is required only when policy.requiresHumanApproval is true.
 app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
   const basketId = String(req.body?.basketId ?? '').trim();
   const workspaceId = String(req.body?.workspaceId ?? '').trim();
@@ -1348,8 +1321,6 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
     });
     return;
   }
-  // maxSpend is also server-controlled; reject any body override so the
-  // browser cannot raise the buyer ceiling at request time.
   if (req.body?.maxSpend !== undefined) {
     res.status(400).json({
       error: {
@@ -1391,8 +1362,6 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
     return;
   }
 
-  // Pull buyer session ceiling. The body override path is rejected above;
-  // the only source of truth for the buyer limit is the buyer_sessions row.
   let buyerCeiling: number | null = null;
   try {
     const { rows } = await pool.query<{ max_spend: number | string | null }>(
@@ -1409,7 +1378,7 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
   try {
     const { rows } = await pool.query<{ max_auto_approve: number | string }>(
       `SELECT max_auto_approve FROM merchant_settings WHERE workspace_id = $1`,
-      [merchantWorkspace()],
+      [merchantWorkspaceFor(req)],
     );
     if (rows[0]) merchantCeiling = Number(rows[0].max_auto_approve);
   } catch {
@@ -1473,7 +1442,12 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
   // Resolve credentials before creating order so we fail fast
   let creds: ResolvedRazorpayCreds | null = null;
   try {
-    creds = await resolveRazorpayCreds(workspaceId);
+    // The buyer is initiating checkout but the MERCHANT owns the keys.
+    // resolveRazorpayCreds looks up merchant_credentials by workspace_id;
+    // passing the buyer's workspaceId always misses, then falls through to
+    // the env fallback (which is a different workspace's keys) -> Razorpay
+    // returns 401. Resolve against the merchant workspace instead.
+    creds = await resolveRazorpayCreds(merchantWorkspaceFor(req));
   } catch (err) {
     console.error('checkout/start: failed to resolve credentials:', err);
   }
@@ -1515,8 +1489,6 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
   let createIdemKey = '';
   try {
     const created = await withTransaction(async (client) => {
-      // Idempotency: a previous /api/checkout/start already turned this basket
-      // into an order. If so, return 409 — caller should not retry blindly.
       const { rowCount: existing } = await client.query(
         `SELECT 1 FROM orders WHERE basket_id = $1 LIMIT 1`,
         [basketId],
@@ -1567,8 +1539,6 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
         );
         console.error('[debug-auto-stamp] updated rows=', rowCount);
       }
-      // markBasketCheckedOut guarded by status=open — second concurrent submit
-      // loses the race here even if the unique index didn't fire.
       const { rowCount: closed } = await client.query(
         `UPDATE baskets SET status = 'checked_out', updated_at = NOW()
          WHERE id = $1 AND status = 'open'`,
@@ -1586,13 +1556,9 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
       // The orderId is passed so the reservation row is keyed (order_id,
       // product_id) — duplicate cancels/restores won't inflate stock.
       const invItems = basket.items.map((it) => ({ productId: it.productId, quantity: 1 }));
-      await reserveInventory(client, oid, invItems);
+      await reserveInventory(client, oid, invItems, merchantWorkspaceFor(req));
 
       if (policy.requiresHumanApproval) {
-        // Order is created in pending_human_review. The dedicated
-        // /api/checkout/human-approve/:orderId route is the ONLY way to
-        // flip it to human_approved. This guarantees a human_override
-        // audit row is recorded.
         void oid;
       }
 
@@ -1670,21 +1636,24 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
   }
   try {
     const rp = new Razorpay({ key_id: creds.keyId, key_secret: creds.keySecret });
-    // The Razorpay SDK supports `idempotency_key`; pass our stable per-order
-    // key so a network-timeout retry does not produce a second order.
+    // ponytail: SDK 2.9.8 `orders.create(params, callback?)` — Promise only
+    // when NO callback is passed. The previous code passed the 2nd arg
+    // (idempotency_key) and the SDK tried to invoke it -> "cb is not a
+    // function"; passing an empty noop callback made it return undefined
+    // -> "Cannot read properties of undefined (reading 'id')". Call without
+    // a callback so the Promise path runs. Idempotency stays enforced at
+    // the DB layer (razorpay_create_idem_key + ON CONFLICT). Upgrade path:
+    // raw fetch + X-Idempotency-Key header for network-layer retry safety.
     const rpOrder = await (rp.orders as unknown as {
-      create: (params: Record<string, unknown>, opts?: { idempotency_key?: string }) => Promise<{
+      create: (params: Record<string, unknown>) => Promise<{
         id: string; amount: number; currency: string;
       }>;
-    }).create(
-      {
-        amount: Math.round(subtotal * 100),
-        currency: 'INR',
-        receipt: `order_${orderId}`,
-        notes: { commerce0s_order_id: String(orderId) },
-      },
-      { idempotency_key: createIdemKey },
-    );
+    }).create({
+      amount: Math.round(subtotal * 100),
+      currency: 'INR',
+      receipt: `order_${orderId}`,
+      notes: { commerce0s_order_id: String(orderId) },
+    });
     rpOrderId = rpOrder.id;
     rpOrderAmount = rpOrder.amount;
     await emitProtocolEvent({
@@ -1745,10 +1714,6 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
        ON CONFLICT (idempotency_key) DO NOTHING`,
       [orderId, createIdemKey, JSON.stringify({ message: e?.message ?? 'unknown', statusCode: status ?? null })],
     ).catch(() => {});
-    // If the failure looks like a network timeout / 5xx, leave the order
-    // in its intermediate state and stamp payment_pending_since so the
-    // reconciler can retry. The webhook (when it arrives) will still flip
-    // it to paid.
     const isUpstream = !status || status >= 500;
     if (isUpstream) {
       await pool.query(
@@ -1979,9 +1944,6 @@ async function ensureMerchantSettingsTable(): Promise<void> {
       require_human_above_cap BOOLEAN NOT NULL DEFAULT TRUE
     );
   `);
-  // Seed the server's own workspace row if it doesn't exist yet. After the
-  // 2026-09-03 migration, the PK is `workspace_id`; the row must include
-  // both `merchant_id` (legacy) and `workspace_id` (new lookup key).
   const ws = merchantWorkspace();
   const { rowCount } = await pool.query(
     'SELECT 1 FROM merchant_settings WHERE workspace_id = $1',
@@ -1996,12 +1958,11 @@ async function ensureMerchantSettingsTable(): Promise<void> {
   }
 }
 
-// GET /api/settings — read current merchant settings
-app.get('/api/settings', async (_req, res) => {
+app.get('/api/settings', async (req, res) => {
   try {
     const { rows } = await pool.query<MerchantSettingsRow>(
       'SELECT merchant_id, max_auto_approve, require_human_above_cap FROM merchant_settings WHERE workspace_id = $1',
-      [merchantWorkspace()],
+      [merchantWorkspaceFor(req)],
     );
     if (rows.length === 0) {
       res
@@ -2026,7 +1987,7 @@ app.get('/api/settings', async (_req, res) => {
 // PUT /api/settings — update merchant settings
 app.put('/api/settings', async (req, res) => {
   const { maxAutoApprove, requireHumanAboveCap } = req.body ?? {};
-  const ws = merchantWorkspace();
+  const ws = merchantWorkspaceFor(req);
   try {
     const { rows } = await pool.query<MerchantSettingsRow>(
       `UPDATE merchant_settings
@@ -2069,12 +2030,12 @@ function maskRazorpayKeyId(keyId: string): string {
 }
 
 // GET /api/settings/razorpay — return masked keyId + configured flag, never the secret
-app.get('/api/settings/razorpay', async (_req, res) => {
+app.get('/api/settings/razorpay', async (req, res) => {
   try {
     const { rows } = await pool.query<MerchantCredentialsRow>(
       `SELECT merchant_id, workspace_id, razorpay_key_id, updated_at
        FROM merchant_credentials WHERE workspace_id = $1`,
-      [merchantWorkspace()],
+      [merchantWorkspaceFor(req)],
     );
     if (rows.length === 0) {
       const envId = process.env.RAZORPAY_KEY_ID;
@@ -2144,11 +2105,7 @@ app.put('/api/settings/razorpay', async (req, res) => {
   try {
     const encSecret = encryptSecret(keySecret);
     const encWebhook = encryptSecret(webhookSecret);
-    const ws = merchantWorkspace();
-    // After the 2026-09-03 migration, the PK on merchant_credentials is
-    // `workspace_id`. We upsert by workspace_id and also keep the
-    // legacy `merchant_id` column populated (it equals workspace_id for
-    // the singleton deployment, per the migration backfill).
+    const ws = merchantWorkspaceFor(req);
     await pool.query(
       `INSERT INTO merchant_credentials
          (merchant_id, workspace_id, razorpay_key_id, razorpay_key_secret_encrypted, razorpay_webhook_secret_encrypted, updated_at)
@@ -2172,11 +2129,11 @@ app.put('/api/settings/razorpay', async (req, res) => {
 });
 
 // DELETE /api/settings/razorpay — clear stored creds, fall back to env (if any)
-app.delete('/api/settings/razorpay', async (_req, res) => {
+app.delete('/api/settings/razorpay', async (req, res) => {
   try {
     await pool.query(
       `DELETE FROM merchant_credentials WHERE workspace_id = $1`,
-      [merchantWorkspace()],
+      [merchantWorkspaceFor(req)],
     );
     const envId = process.env.RAZORPAY_KEY_ID;
     const envFallbackAvailable = !!(envId && process.env.RAZORPAY_KEY_SECRET);
@@ -2191,9 +2148,6 @@ app.delete('/api/settings/razorpay', async (_req, res) => {
 
 // POST /api/settings/razorpay/test — make one lightweight Razorpay call
 app.post('/api/settings/razorpay/test', async (_req, res) => {
-  // Settings test always targets the merchant-server's own workspace —
-  // it has no buyer-side context. `merchantWorkspace()` returns the
-  // single workspace this server is configured for today.
   let creds: ResolvedRazorpayCreds | null = null;
   try {
     creds = await resolveRazorpayCreds(merchantWorkspace());
@@ -2293,8 +2247,6 @@ app.post('/api/admin/razorpay/reconcile', async (req, res) => {
     const results: Array<{ orderId: number; action: string; razorpayOrderId?: string }> = [];
     for (const c of candidates) {
       if (!c.razorpay_create_idem_key) continue;
-      // Has the attempt table already recorded a success for this key? If
-      // so, recover the order id and persist it.
       const { rows: prior } = await pool.query<{ razorpay_order_id: string | null }>(
         `SELECT razorpay_order_id FROM razorpay_attempts
           WHERE idempotency_key = $1 AND response_status = 'success'
@@ -2397,9 +2349,6 @@ app.post('/api/admin/razorpay/refunds/reconcile', async (req, res) => {
           fetch: (id: string) => Promise<unknown>;
           refund: (id: string, p: { amount: number }, o?: { idempotency_key?: string }) => Promise<{ id: string }>;
         }).fetch(c.razorpay_payment_id).catch(() => null);
-        // List refunds for the payment. The SDK returns either the payment
-        // object or null; for an authoritative list we use the dedicated
-        // refunds listing when available.
         const list = await fetch(`https://api.razorpay.com/v1/payments/${c.razorpay_payment_id}/refunds`, {
           headers: { Authorization: `Basic ${Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString('base64')}` },
         }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
@@ -2425,9 +2374,6 @@ app.post('/api/admin/razorpay/refunds/reconcile', async (req, res) => {
           });
           results.push({ orderId: c.id, action: 'recovered', refundId: found.id });
         } else {
-          // No matching processed refund yet — either still pending or
-          // genuinely failed. We leave the order in refund_requested and
-          // do nothing; the next reconcile pass will re-check.
           results.push({ orderId: c.id, action: 'still_pending' });
         }
         void refunds;
@@ -2443,9 +2389,6 @@ app.post('/api/admin/razorpay/refunds/reconcile', async (req, res) => {
   }
 });
 
-// POST /api/admin/orders/:id/cancel — cancel an unpaid order and restore
-// inventory. Idempotent: a second call on a cancelled or paid order is
-// a no-op.
 app.post('/api/admin/orders/:id/cancel', async (req, res) => {
   if (!adminAuthOk(req)) {
     res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Admin token required.' } });
@@ -2514,14 +2457,9 @@ app.post('/api/checkout/human-approve/:orderId', async (req, res) => {
     res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'Invalid order id.' } });
     return;
   }
-  // Workspace isolation: the merchant must be in the same workspace as the
-  // order, or a member of the merchant workspace (cross-workspace approval
-  // returns the same 404 as a not-found order).
-  const requestWs = (req.body?.workspaceId as string | undefined)?.trim() || merchantWorkspace();
+  const requestWs = (req.body?.workspaceId as string | undefined)?.trim() || merchantWorkspaceFor(req);
   try {
     const result = await withTransaction(async (client) => {
-      // Workspace check FIRST so a cross-workspace attacker never observes
-      // the difference between "no such order" and "wrong workspace".
       const { rows: wsRows } = await client.query<{ workspace_id: string | null; status: string }>(
         `SELECT workspace_id, status FROM orders WHERE id = $1`,
         [orderId],
@@ -2529,7 +2467,7 @@ app.post('/api/checkout/human-approve/:orderId', async (req, res) => {
       if (wsRows.length === 0) return { blocked: 'NOT_FOUND' as const };
       if (
         wsRows[0].workspace_id !== requestWs &&
-        wsRows[0].workspace_id !== merchantWorkspace()
+        wsRows[0].workspace_id !== merchantWorkspaceFor(req)
       ) {
         return { blocked: 'NOT_FOUND' as const };
       }
@@ -2594,7 +2532,7 @@ app.post('/api/checkout/human-approve/:orderId', async (req, res) => {
       // `r.workspace_id` came from the order row's RETURNING clause above.
       // Fall back to the server's configured workspace if the column is
       // somehow null (defensive — should not happen post-migration).
-      const creds = await resolveRazorpayCreds(r.workspace_id ?? merchantWorkspace());
+      const creds = await resolveRazorpayCreds(r.workspace_id ?? merchantWorkspaceFor(req));
       if (!creds) {
         res.status(409).json({
           error: {
@@ -2657,9 +2595,6 @@ app.post('/api/checkout/human-approve/:orderId', async (req, res) => {
 
 // ── Buyer query orchestration ──────────────────────────────────────────────
 
-// Trace steps are persisted to trace_events for the audit log; the response
-// carries the same array so the client renders it directly. No SSE — the
-// POST returns everything the trace page needs.
 interface TraceStep {
   label: string;
   detail: string;
@@ -2772,7 +2707,6 @@ function scoreProduct(
     }
   }
 
-  // Stock bonus — only counts when there is already a real match.
   if (matches > 0 && product.inStock) score += 0.1;
 
   return { score: Math.min(score, 1), matches };
@@ -2799,7 +2733,6 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
 
   const emit = (step: TraceStep) => {
     steps.push(step);
-    // Persist to DB (fire-and-forget)
     pool
       .query(
         'INSERT INTO trace_events (session_id, step_index, label, detail) VALUES ($1, $2, $3, $4)',
@@ -2830,12 +2763,13 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
     try {
       const res = await fetch(`${RETAILER_URL}/health`, { signal: ctrl.signal });
       if (!res.ok) throw new Error(`Retailer health check returned ${res.status}`);
-      // Supplier is reachable — query DB for catalog (as if retailer synced it)
       const { rows } = await pool.query<ProductRow>(
         `SELECT ${CATALOG_COLS}
          FROM products
          WHERE enable_search = TRUE AND status != 'archived'
+           AND workspace_id = $1
          ORDER BY id`,
+        [merchantWorkspaceFor(req)],
       );
       clearTimeout(timer);
       await emitProtocolEvent({
@@ -2906,7 +2840,6 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
       products = await fetchCatalogFromSupplier();
       catalogSource = 'retry';
     } catch {
-      // Retry also failed — fall back to cache
       emit({
         label: 'Retry failed',
         detail: 'Using cached catalog data from last successful sync',
@@ -2999,7 +2932,7 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
   try {
     const { rows } = await pool.query<MerchantSettingsRow>(
       'SELECT max_auto_approve, require_human_above_cap FROM merchant_settings WHERE workspace_id = $1',
-      [merchantWorkspace()],
+      [merchantWorkspaceFor(req)],
     );
     if (rows.length > 0) {
       maxAutoApprove = Number(rows[0].max_auto_approve);
@@ -3079,9 +3012,10 @@ app.post('/api/buyer/query', buyerQueryLimiter, async (req, res) => {
            AND inventory_quantity > 0
            AND id <> $1
            AND (product_category = $2 OR (item_group_id IS NOT NULL AND item_group_id = $3))
+           AND workspace_id = $4
          ORDER BY price ASC
          LIMIT 2`,
-        [recommended.id, recommended.category ?? '', null],
+        [recommended.id, recommended.category ?? '', null, merchantWorkspaceFor(req)],
       );
       suggestions = rows.map((r, idx) => ({
         id: r.id,
@@ -3153,8 +3087,6 @@ function suggestedTotal(suggestions: Array<{ price: number }>): number {
   return suggestions.reduce((sum, s) => sum + s.price, 0);
 }
 
-// POST /api/buyer/upsell/accept — accept a suggestion and re-run the policy
-// check against the new combined total (Section A, step 3).
 app.post('/api/buyer/upsell/accept', upsellLimiter, async (req, res) => {
   const { sessionId, suggestionId, primaryProductId } = req.body ?? {};
   if (!sessionId || !suggestionId || !primaryProductId) {
@@ -3170,8 +3102,9 @@ app.post('/api/buyer/upsell/accept', upsellLimiter, async (req, res) => {
   try {
     // Re-read the two products so we can compute the actual combined total.
     const { rows } = await pool.query<{ price: number | string; name: string; id: number }>(
-      `SELECT id, name, price FROM products WHERE id = ANY($1::int[])`,
-      [[Number(primaryProductId), Number(suggestionId)]],
+      `SELECT id, name, price FROM products
+       WHERE id = ANY($1::int[]) AND workspace_id = $2`,
+      [[Number(primaryProductId), Number(suggestionId)], merchantWorkspaceFor(req)],
     );
     if (rows.length < 2) {
       res
@@ -3194,7 +3127,7 @@ app.post('/api/buyer/upsell/accept', upsellLimiter, async (req, res) => {
     try {
       const r = await pool.query<MerchantSettingsRow>(
         'SELECT max_auto_approve FROM merchant_settings WHERE workspace_id = $1',
-        [merchantWorkspace()],
+        [merchantWorkspaceFor(req)],
       );
       if (r.rows.length > 0) merchantCap = Number(r.rows[0].max_auto_approve);
     } catch {
@@ -3285,8 +3218,6 @@ app.post('/api/buyer/upsell/accept', upsellLimiter, async (req, res) => {
 
 // ── Razorpay checkout ────────────────────────────────────────────────────
 
-// POST /api/checkout/create-order — REMOVED. Use POST /api/checkout/start
-// with a basketId so the amount is server-derived.
 app.post('/api/checkout/create-order', (_req, res) => {
   res.status(410).json({
     error: {
@@ -3300,8 +3231,6 @@ app.post('/api/checkout/create-order', (_req, res) => {
 // Verifies HMAC over the exact raw bytes (req.rawBody), idempotency via
 // webhook_events, server-authoritative state transition, structured audit.
 app.post('/api/checkout/webhook', async (req, res) => {
-  // Webhooks do not carry workspace context. The HMAC secret is the
-  // server's own configured workspace (today `merchantWorkspace()`).
   let creds: ResolvedRazorpayCreds | null = null;
   try {
     creds = await resolveRazorpayCreds(merchantWorkspace());
@@ -3392,9 +3321,6 @@ app.post('/api/checkout/webhook', async (req, res) => {
             if (r.outcome === 'transitioned') {
               console.log(`✅ Webhook: order ${orderId} marked as paid`);
             } else if (r.outcome === 'blocked') {
-              // pending_human_review: webhook cannot auto-promote. Order
-              // must be human_approved first. Audit the rejection so it is
-              // visible in /api/activity.
               await recordEvent({
                 pool: client, strict: false,
                 txnId: ordRows[0]?.transaction_id ?? null,
@@ -3508,7 +3434,7 @@ app.get('/api/checkout/verify/:orderId', async (req, res) => {
     return;
   }
   const workspaceId =
-    (req.query.workspaceId as string | undefined)?.trim() || merchantWorkspace();
+    (req.query.workspaceId as string | undefined)?.trim() || merchantWorkspaceFor(req);
 
   type VerifyOrderRow = {
     id: number; product_id: number; buyer_agent_id: string; amount: string;
@@ -3529,7 +3455,7 @@ app.get('/api/checkout/verify/:orderId', async (req, res) => {
       return;
     }
     order = rows[0];
-    if (order && order.workspace_id !== workspaceId && order.workspace_id !== merchantWorkspace()) {
+    if (order && order.workspace_id !== workspaceId && order.workspace_id !== merchantWorkspaceFor(req)) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: 'Order not found.' } });
       return;
     }
@@ -3545,9 +3471,7 @@ app.get('/api/checkout/verify/:orderId', async (req, res) => {
     // is the SAME function the webhook uses, so a verify cannot bypass the
     // human-approval gate (markPaid refuses pending_human_review).
     try {
-      // `order.workspace_id` is the order's workspace; fall back to the
-      // server's configured workspace for the merchant path.
-      const creds = await resolveRazorpayCreds(order.workspace_id ?? merchantWorkspace());
+      const creds = await resolveRazorpayCreds(order.workspace_id ?? merchantWorkspaceFor(req));
       if (creds) {
         const auth = Buffer.from(`${creds.keyId}:${creds.keySecret}`).toString('base64');
         const rpRes = await fetch(`https://api.razorpay.com/v1/orders?receipt=order_${orderId}`, {
@@ -3598,8 +3522,6 @@ app.get('/api/checkout/verify/:orderId', async (req, res) => {
       }
     } catch (rpErr) {
       console.error('Razorpay verification failed:', rpErr);
-      // Return the order as-is; verify never mutates a non-terminal order
-      // when the upstream call fails.
     }
 
     res.json(order);
@@ -3620,9 +3542,6 @@ app.post('/api/debug/simulate-failure', (req, res) => {
 });
 
 app.get('/api/debug/status', (_req, res) => {
-  // Explicit allowlist — never echo env, never echo process info. Any new
-  // field must be added here intentionally; grep rejects patterns like
-  // `process.env` and `DATABASE_URL` in this file.
   res.json({
     simulateSupplierFailure,
     catalogCacheSize: catalogCache.length,
@@ -3663,11 +3582,31 @@ async function ensureAuditLogTable(): Promise<void> {
 
 // ── Workspace + state-machine helpers ─────────────────────────────────────
 
-// One boundary for future multi-tenant work. Today every merchant request
-// resolves to 'default'; tomorrow this becomes a header- or JWT-derived id.
 const MERCHANT_WORKSPACE_ID = 'default';
 function merchantWorkspace(): string {
   return MERCHANT_WORKSPACE_ID;
+}
+
+// Per-request merchant workspace, derived from the `X-Merchant-Workspace-Id`
+// header that `/api/bootstrap` returns to each signed-in browser. Falls back
+// to the single-tenant default for any caller that didn't send the header
+// (admin token, server-to-server webhook). The header is a hint, not
+// authoritative — the demo merchant workspace is still server-resolved by
+// email, so a forged `X-Merchant-Workspace-Id: ws_demo_merchant` from a
+// non-demo session is filtered out at /api/bootstrap time, not here.
+function merchantWorkspaceFor(req: { headers: Record<string, unknown> }): string {
+  const raw = req.headers['x-merchant-workspace-id'];
+  if (typeof raw === 'string' && raw.trim()) return raw.trim();
+  return MERCHANT_WORKSPACE_ID;
+}
+
+function hashEmailForMerchant(email: string | null | undefined): string {
+  if (!email) return 'guest';
+  let h = 5381;
+  for (let i = 0; i < email.length; i++) {
+    h = ((h << 5) + h + email.charCodeAt(i)) | 0;
+  }
+  return Math.abs(h).toString(36);
 }
 
 // Server-authoritative status transitions. UPDATE ... WHERE status = ANY($from)
@@ -3718,7 +3657,7 @@ app.get('/api/audit', async (req, res) => {
   const action = req.query.action as string | undefined;
   const outcome = req.query.outcome as string | undefined;
   const transactionId = (req.query.transactionId as string | undefined)?.trim();
-  const workspaceId = (req.query.workspaceId as string | undefined)?.trim() || merchantWorkspace();
+  const workspaceId = (req.query.workspaceId as string | undefined)?.trim() || merchantWorkspaceFor(req);
   const limit = Math.min(Number(req.query.limit) || 50, 200);
   const offset = Number(req.query.offset) || 0;
 
@@ -3746,8 +3685,6 @@ app.get('/api/audit', async (req, res) => {
     conditions.push(`transaction_id = $${idx++}`);
     params.push(transactionId);
   }
-  // workspaceId is now always set (defaulted to merchantWorkspace above),
-  // so every audit read is workspace-scoped by default.
   conditions.push(`workspace_id = $${idx++}`);
   params.push(workspaceId);
 
@@ -3918,26 +3855,13 @@ async function start() {
   await ensureInventoryReservationsTable(pool);
   console.log('✅ Inventory reservations table ready');
 
-  // Demo workspace seed — seeds rows into the demo BUYER workspace
-  // (DEMO_BUYER_WORKSPACE_ID) and demo MERCHANT workspace
-  // (DEMO_MERCHANT_WORKSPACE) only. Non-demo workspaces created via
-  // /api/bootstrap receive only an empty buyer_sessions row, nothing
-  // else. Idempotent: re-runs are a no-op once the demo buyer workspace
-  // has any orders.
   await seedDemoDataIfEmpty(pool);
   console.log('✅ Demo workspace seeded (or already populated)');
 
-  // /agent/* — agent catalog + seller-agent endpoints. Contract lives in
-  // AGENT_CATALOG_DESIGN.md. Mounted after the rest of the API so the
-  // express.json() body parser above applies.
   mountAgentCatalog(app, {
     pool,
     merchantWorkspace,
     resolveAutoApproveCeiling: async () => {
-      // Ponytail: read merchant_settings.max_auto_approve for the merchant
-      // workspace, fall back to 180.00 (matches the demo seed). Promote to
-      // a per-workspace lookup once the merchant settings table has more
-      // than one row in practice.
       try {
         const { rows } = await pool.query<{ max_auto_approve: number | string }>(
           `SELECT max_auto_approve FROM merchant_settings WHERE workspace_id = $1 LIMIT 1`,

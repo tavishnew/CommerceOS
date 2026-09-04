@@ -52,6 +52,7 @@ export async function reserveInventory(
   client: PoolClient,
   orderId: number,
   items: InventoryItem[],
+  merchantWorkspaceId: string,
 ): Promise<void> {
   for (const it of items) {
     if (it.quantity <= 0) continue;
@@ -61,15 +62,17 @@ export async function reserveInventory(
         WHERE id = $2
           AND inventory_quantity >= $1
           AND availability = TRUE
-          AND status <> 'archived'`,
-      [it.quantity, it.productId],
+          AND status <> 'archived'
+          AND workspace_id = $3`,
+      [it.quantity, it.productId, merchantWorkspaceId],
     );
     if (rowCount === 0) {
       const { rows: rs } = await client.query<{
         availability: boolean; status: string; inventory_quantity: number;
       }>(
-        `SELECT availability, status, inventory_quantity FROM products WHERE id = $1`,
-        [it.productId],
+        `SELECT availability, status, inventory_quantity FROM products
+         WHERE id = $1 AND workspace_id = $2`,
+        [it.productId, merchantWorkspaceId],
       );
       const row = rs[0];
       let reason: 'out_of_stock' | 'archived' | 'unavailable' = 'unavailable';
@@ -80,9 +83,6 @@ export async function reserveInventory(
       }
       throw new InventoryUnavailable(it.productId, reason);
     }
-    // Record the reservation. ON CONFLICT DO NOTHING so re-running the same
-    // tx in a retry doesn't double-record (and won't inflate stock on
-    // restore, because the conflict-path is a no-op for the quantity column).
     await client.query(
       `INSERT INTO inventory_reservations (order_id, product_id, quantity)
        VALUES ($1, $2, $3)
