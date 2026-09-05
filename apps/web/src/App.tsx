@@ -178,6 +178,8 @@ import {
   type CheckoutStartResponse,
   type CheckoutStartPolicy,
   type TransactionDetail,
+  negotiateSeller,
+  type NegotiationResult,
 } from '@/lib/api';
 
 const queryClient = new QueryClient();
@@ -4288,6 +4290,7 @@ function BuyerSettings() {
 
 function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
   const { toast } = useToast();
+  const { committedNegotiation, setCommittedNegotiation } = useWorkspace();
   const [prompt, setPrompt] = useState('');
   const [submittedPrompt, setSubmittedPrompt] = useState('');
   const [maxSpend, setMaxSpend] = useState<string>('180');
@@ -4306,6 +4309,14 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
   }>({ busy: false, result: null, error: null });
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState<number | null>(null);
+  const [negotiation, setNegotiation] = useState<{
+    open: boolean;
+    busy: boolean;
+    error: string | null;
+    quantity: number;
+    proposed: string;
+    result: NegotiationResult | null;
+  }>({ open: false, busy: false, error: null, quantity: 1, proposed: '', result: null });
   const sample = 'Find a warm desk lamp under $180 for evening reading.';
   const isCheckout = subpage === '/buyer/checkout';
   const isTrace = subpage === '/buyer/trace';
@@ -4451,6 +4462,11 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
           sessionId={sessionId}
           policy={traceResult?.policy ?? null}
           viewer="buyer"
+          negotiatedPrice={
+            committedNegotiation && committedNegotiation.productId === rec?.id
+              ? { unitPrice: committedNegotiation.unitPrice, negotiationTxnId: committedNegotiation.negotiationTxnId }
+              : null
+          }
           theme={theme}
         />
       )}
@@ -4549,7 +4565,7 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
                               ? 'This is above the limit you set — human approval required.'
                               : 'It matches intent but is above the merchant cap — human approval required.'
                             : 'It matches intent and is policy-approved.'}
-                          <div className="mt-4 flex gap-2">
+                          <div className="mt-4 flex flex-wrap gap-2">
                             <Link
                               href="/buyer/trace"
                               className="rounded-md border border-foreground/15 px-2.5 py-1.5 font-mono-ui text-[10px]"
@@ -4557,6 +4573,28 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
                             >
                               View trace
                             </Link>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                const min = rec.negotiation?.min_price ?? Math.round(rec.price * 0.8);
+                                setNegotiation({
+                                  open: true,
+                                  busy: false,
+                                  error: null,
+                                  quantity: 1,
+                                  proposed: String(min),
+                                  result: null,
+                                });
+                              }}
+                              disabled={!rec.negotiation?.negotiable}
+                              className="rounded-md border border-[var(--commerce-signal)]/40 bg-[var(--commerce-signal)]/10 px-2.5 py-1.5 font-mono-ui text-[10px] text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                              data-testid="button-open-negotiate"
+                              title={rec.negotiation?.negotiable ? 'Negotiate price' : 'List price only'}
+                            >
+                              {committedNegotiation && committedNegotiation.productId === rec.id
+                                ? `Price negotiated · ₹${committedNegotiation.unitPrice.toFixed(2)}`
+                                : 'Negotiate'}
+                            </button>
                             <Link
                               href="/buyer/checkout"
                               className="rounded-md bg-foreground px-2.5 py-1.5 font-mono-ui text-[10px] text-background"
@@ -4576,6 +4614,14 @@ function BuyerConsole({ subpage, theme }: { subpage: string; theme: Theme }) {
                             setUpsellState,
                             toast,
                           })}
+                          <NegotiatePanel
+                            rec={rec}
+                            state={negotiation}
+                            setState={setNegotiation}
+                            onCommit={(unitPrice, negotiationTxnId) => {
+                              setCommittedNegotiation({ productId: rec.id, sku: rec.sku, unitPrice, currency: rec.currency, negotiationTxnId });
+                            }}
+                          />
                         </>
                       ) : (
                         <>
@@ -4842,6 +4888,7 @@ function Checkout({
   viewer = 'merchant',
   paymentState,
   theme = 'light',
+  negotiatedPrice,
 }: {
   product: Product | null | undefined;
   approved: boolean;
@@ -4851,10 +4898,13 @@ function Checkout({
   viewer?: 'merchant' | 'buyer';
   paymentState?: 'idle' | 'pending_verification' | 'paid' | 'failed';
   theme?: Theme;
+  negotiatedPrice?: { unitPrice: number; negotiationTxnId: string } | null;
 }) {
+  const { setCommittedNegotiation } = useWorkspace();
   const name = product?.name ?? '';
   const sku = product?.sku ?? '';
-  const price = product?.price ?? 0;
+  const listPrice = product?.price ?? 0;
+  const price = negotiatedPrice?.unitPrice ?? listPrice;
   const seller = product?.sellerId ?? '';
   const needsHuman = policy?.decision === 'human_approval_required';
   const [paying, setPaying] = useState(false);
@@ -4867,9 +4917,20 @@ function Checkout({
     setPaying(true);
     setPayError(null);
     try {
-      // 1. Server-authoritative basket: amount is recalculated from DB.
+      // 1. Server-authoritative basket: amount is recalculated from DB
+      //    OR from the negotiated-price audit row if a negotiation
+      //    was committed. The server re-validates the negotiation row
+      //    before honoring it — see resolveNegotiatedPrice in
+      //    apps/api/src/basket.ts.
       const workspaceId = getOrCreateBuyerWorkspaceId();
-      const basket = await createBasket(workspaceId, product.id);
+      const basket = await createBasket(workspaceId, product.id, {
+        ...(negotiatedPrice
+          ? {
+              negotiatedUnitPrice: negotiatedPrice.unitPrice,
+              negotiationTxnId: negotiatedPrice.negotiationTxnId,
+            }
+          : {}),
+      });
       // 2. Start checkout → server runs policy. When policy.requiresHumanApproval
       // is true, the server returns 200 with the order in pending_human_review
       // and NO razorpayOrderId. The user MUST click Approve which calls the
@@ -4915,6 +4976,7 @@ function Checkout({
               const verified = await verifyOrder(checkout.orderId, workspaceId);
               if (verified.status === 'paid') {
                 setPaying(false);
+                setCommittedNegotiation(null);
                 onApprove();
                 return;
               }
@@ -5477,6 +5539,155 @@ function BootstrapErrorBridge() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [status, error]);
   return null;
+}
+
+interface NegotiatePanelProps {
+  rec: Product;
+  state: {
+    open: boolean;
+    busy: boolean;
+    error: string | null;
+    quantity: number;
+    proposed: string;
+    result: NegotiationResult | null;
+  };
+  setState: React.Dispatch<React.SetStateAction<NegotiatePanelProps['state']>>;
+  onCommit: (unitPrice: number, negotiationTxnId: string) => void;
+}
+
+function NegotiatePanel({ rec, state, setState, onCommit }: NegotiatePanelProps) {
+  if (!state.open) return null;
+  const min = rec.negotiation?.min_price ?? Math.round(rec.price * 0.8);
+  const submit = async () => {
+    const proposed = Number(state.proposed.replace(/[^0-9.]/g, ''));
+    if (!Number.isFinite(proposed) || proposed <= 0) {
+      setState((s) => ({ ...s, error: 'Enter a positive price.' }));
+      return;
+    }
+    setState((s) => ({ ...s, busy: true, error: null, result: null }));
+    try {
+      const r = await negotiateSeller({
+        sku: rec.sku,
+        quantity: state.quantity,
+        proposedUnitPrice: proposed,
+        currency: rec.currency,
+      });
+      setState((s) => ({ ...s, busy: false, result: r.data }));
+    } catch (err) {
+      const msg = err instanceof ApiError ? err.message : 'Negotiation failed.';
+      setState((s) => ({ ...s, busy: false, error: msg }));
+    }
+  };
+  const accept = () => {
+    const r = state.result;
+    if (!r || r.unit_price == null || !r.negotiation_txn_id) return;
+    onCommit(r.unit_price, r.negotiation_txn_id);
+    setState((s) => ({ ...s, open: false }));
+  };
+  return (
+    <div
+      className="mt-3 rounded-xl border border-[var(--commerce-signal)]/30 bg-[var(--commerce-signal)]/5 p-3 text-xs"
+      data-testid="panel-negotiate"
+    >
+      <div className="mb-2 flex items-center justify-between">
+        <span className="font-mono-ui text-[10px] uppercase tracking-[.12em] text-foreground">
+          Negotiate with seller
+        </span>
+        <button
+          type="button"
+          onClick={() => setState((s) => ({ ...s, open: false }))}
+          className="text-muted-foreground hover:text-foreground"
+          data-testid="button-close-negotiate"
+        >
+          ✕
+        </button>
+      </div>
+      <div className="grid grid-cols-2 gap-2">
+        <label className="flex flex-col gap-1">
+          <span className="font-mono-ui text-[9px] uppercase tracking-[.12em] text-muted-foreground">
+            Quantity
+          </span>
+          <input
+            type="number"
+            min={1}
+            value={state.quantity}
+            onChange={(e) =>
+              setState((s) => ({ ...s, quantity: Math.max(1, Number(e.target.value) || 1) }))
+            }
+            className="h-8 rounded-md border border-foreground/15 bg-background px-2 font-mono-ui text-[10px]"
+            data-testid="input-negotiate-quantity"
+          />
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="font-mono-ui text-[9px] uppercase tracking-[.12em] text-muted-foreground">
+            Your offer ({rec.currency})
+          </span>
+          <input
+            type="number"
+            step="0.01"
+            min={min}
+            value={state.proposed}
+            onChange={(e) => setState((s) => ({ ...s, proposed: e.target.value }))}
+            className="h-8 rounded-md border border-foreground/15 bg-background px-2 font-mono-ui text-[10px]"
+            data-testid="input-negotiate-price"
+          />
+        </label>
+      </div>
+      <div className="mt-2 flex items-center gap-2 text-[10px] text-muted-foreground">
+        List {rec.price.toFixed(2)} · min {min.toFixed(2)}
+        {rec.negotiation?.bulk_tiers?.length ? (
+          <span>
+            · bulk {rec.negotiation.bulk_tiers.map((t) => `${t.min_quantity}+@${t.unit_price.toFixed(2)}`).join(', ')}
+          </span>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        onClick={submit}
+        disabled={state.busy}
+        className="mt-3 inline-flex h-8 items-center rounded-md bg-foreground px-3 font-mono-ui text-[10px] text-background disabled:opacity-50"
+        data-testid="button-submit-negotiate"
+      >
+        {state.busy ? 'Negotiating…' : 'Send offer'}
+      </button>
+      {state.error && (
+        <p className="mt-2 text-[10px] text-red-500" data-testid="text-negotiate-error">
+          {state.error}
+        </p>
+      )}
+      {state.result && (
+        <div className="mt-3 rounded-md border border-foreground/10 bg-background/40 p-2" data-testid="result-negotiate">
+          <div className="font-mono-ui text-[10px] uppercase tracking-[.12em]">
+            {state.result.decision}
+            {state.result.unit_price != null ? ` · ₹${state.result.unit_price.toFixed(2)}` : ''}
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">{state.result.reason}</p>
+          {(state.result.decision === 'accept' || state.result.decision === 'counter') &&
+            state.result.unit_price != null &&
+            state.result.negotiation_txn_id && (
+              <button
+                type="button"
+                onClick={accept}
+                className="mt-2 inline-flex h-7 items-center rounded-md bg-[var(--commerce-signal)] px-2.5 font-mono-ui text-[10px] text-[var(--commerce-signal-foreground)]"
+                data-testid="button-accept-negotiate"
+              >
+                Use {state.result.unit_price.toFixed(2)}
+              </button>
+            )}
+          {state.result.decision === 'reject' && (
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Try a higher price.
+            </p>
+          )}
+          {state.result.decision === 'counter_quote_required' && (
+            <p className="mt-2 text-[10px] text-muted-foreground">
+              Merchant will respond out-of-band.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export default App;

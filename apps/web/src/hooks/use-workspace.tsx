@@ -18,6 +18,14 @@ import {
 
 export type BootstrapStatus = 'idle' | 'loading' | 'ready' | 'error';
 
+export interface CommittedNegotiation {
+  productId: number;
+  sku: string;
+  negotiationTxnId: string;
+  unitPrice: number;
+  currency: string;
+}
+
 export interface WorkspaceState {
   /** Server-resolved workspace id. Null until bootstrap completes. */
   workspaceId: string | null;
@@ -31,6 +39,11 @@ export interface WorkspaceState {
   error: string | null;
   /** Re-runs the bootstrap call. Safe — server is idempotent. */
   retry: () => void;
+  /** Server-validated negotiated price for the current buyer-product pair.
+   *  Set on accept/counter; consumed by Checkout. Cleared after checkout
+   *  completes so a stale price can't leak into the next order. */
+  committedNegotiation: CommittedNegotiation | null;
+  setCommittedNegotiation: (n: CommittedNegotiation | null) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceState | null>(null);
@@ -41,7 +54,7 @@ const WorkspaceContext = createContext<WorkspaceState | null>(null);
  * The id returned here is what every API call should use.
  */
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<Omit<WorkspaceState, 'retry'>>({
+  const [state, setState] = useState<Omit<WorkspaceState, 'retry' | 'committedNegotiation' | 'setCommittedNegotiation'>>({
     workspaceId: null,
     merchantWorkspaceId: null,
     email: null,
@@ -49,6 +62,7 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
     status: 'idle',
     error: null,
   });
+  const [committedNegotiation, setCommittedNegotiationState] = useState<CommittedNegotiation | null>(null);
   const mountedRef = useRef(true);
   const inflightRef = useRef<Promise<void> | null>(null);
 
@@ -94,8 +108,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<WorkspaceState>(
-    () => ({ ...state, retry: run }),
-    [state, run],
+    () => ({ ...state, retry: run, committedNegotiation, setCommittedNegotiation: setCommittedNegotiationState }),
+    [state, run, committedNegotiation],
   );
 
   return <WorkspaceContext.Provider value={value}>{children}</WorkspaceContext.Provider>;

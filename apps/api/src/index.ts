@@ -16,6 +16,7 @@ import {
   BasketNotFound,
   BasketClosed,
   ProductMissing,
+  InvalidNegotiatedPrice,
 } from './basket.js';
 import {
   reserveInventory,
@@ -76,7 +77,7 @@ app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Origin', origin as string);
       res.setHeader('Vary', 'Origin, Access-Control-Request-Headers');
       res.setHeader('Access-Control-Allow-Methods', 'GET,HEAD,PUT,PATCH,POST,DELETE');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Razorpay-Signature, X-Merchant-Workspace-Id');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Razorpay-Signature, X-Merchant-Workspace-Id, X-Buyer-Email, X-Buyer-Workspace-Id');
       res.setHeader('Access-Control-Max-Age', '600');
     }
     res.status(204).end();
@@ -188,6 +189,12 @@ interface NormalizedProduct {
   category?: string | null;
   status?: string;
   createdAt?: string | null;
+  negotiation?: {
+    negotiable: boolean;
+    min_price: number | null;
+    currency: string;
+    bulk_tiers: Array<{ min_quantity: number; unit_price: number }> | null;
+  } | null;
 }
 
 interface OrderRow {
@@ -202,11 +209,12 @@ interface OrderRow {
 // ── Helpers ──
 
 function normalizeProduct(row: ProductRow): NormalizedProduct {
+  const price = Number(row.price);
   return {
     id: row.id,
     name: row.name,
     sku: row.sku,
-    price: Number(row.price),
+    price,
     currency: row.currency ?? 'USD',
     inStock: row.availability && row.inventory_quantity > 0,
     quantity: row.inventory_quantity,
@@ -217,6 +225,20 @@ function normalizeProduct(row: ProductRow): NormalizedProduct {
     category: row.product_category,
     status: row.status,
     createdAt: row.created_at,
+    // Mirror the agent-catalog projection so the buyer query path
+    // returns the same negotiation block. Single source of truth for
+    // the rule lives in apps/api/src/agent-catalog.ts projectProduct.
+    negotiation: price >= 50
+      ? {
+          negotiable: true,
+          min_price: Math.round(price * 0.8 * 100) / 100,
+          currency: row.currency ?? 'USD',
+          bulk_tiers: [
+            { min_quantity: 5, unit_price: Math.round(price * 0.9 * 100) / 100 },
+            { min_quantity: 25, unit_price: Math.round(price * 0.75 * 100) / 100 },
+          ],
+        }
+      : null,
   };
 }
 
@@ -1033,6 +1055,16 @@ async function emitProtocolEvent(ev: {
 app.post('/api/baskets', async (req, res) => {
   const productId = Number(req.body?.productId);
   const workspaceId = String(req.body?.workspaceId ?? '').trim();
+  // Optional: client sends back the (negotiation_txn_id, unit_price) pair
+  // it received from /agent/seller/negotiate. We re-load the unit price
+  // from the audit log — the client cannot pick a different number.
+  const negotiationTxnId = typeof req.body?.negotiationTxnId === 'string'
+    ? req.body.negotiationTxnId.trim()
+    : null;
+  const negotiatedUnitPriceRaw = req.body?.negotiatedUnitPrice;
+  const negotiatedUnitPrice = typeof negotiatedUnitPriceRaw === 'number'
+    ? negotiatedUnitPriceRaw
+    : null;
   if (!Number.isFinite(productId)) {
     res.status(400).json({ error: { code: 'INVALID_REQUEST', message: 'productId is required.' } });
     return;
@@ -1043,7 +1075,16 @@ app.post('/api/baskets', async (req, res) => {
   }
   try {
     const basket = await withTransaction(async (client) => {
-      const b = await createBasket(client, workspaceId, productId, merchantWorkspaceFor(req));
+      const b = await createBasket(
+        client,
+        workspaceId,
+        productId,
+        merchantWorkspaceFor(req),
+        {
+          ...(negotiationTxnId ? { negotiationTxnId } : {}),
+          ...(negotiatedUnitPrice !== null ? { negotiatedUnitPrice } : {}),
+        },
+      );
       await client.query(
         `INSERT INTO audit_log
            (transaction_id, workspace_id, actor, action, detail, amount, outcome)
@@ -1060,6 +1101,10 @@ app.post('/api/baskets', async (req, res) => {
     }
     if (err instanceof InventoryUnavailable) {
       res.status(409).json({ error: { code: 'INVENTORY_UNAVAILABLE', message: err.message } });
+      return;
+    }
+    if (err instanceof InvalidNegotiatedPrice) {
+      res.status(400).json({ error: { code: 'INVALID_NEGOTIATED_PRICE', message: err.message } });
       return;
     }
     console.error('POST /api/baskets error:', err);
@@ -1412,7 +1457,19 @@ app.post('/api/checkout/start', checkoutLimiter, async (req, res) => {
       return;
     }
   }
-  const subtotal = dbProducts.reduce((s, p) => s + Math.round(Number(p.price) * 100), 0) / 100;
+  // Subtotal uses the negotiated price stored on the basket item when
+  // present, falling back to the live DB list price. The browser cannot
+  // override this — `basket.items[*].priceAtAdd` was stamped at basket
+  // creation from the negotiation audit row (or the product list price).
+  const priceByProduct = new Map<number, number>(
+    dbProducts.map((p) => [p.id, Number(p.price)]),
+  );
+  const subtotal = basket.items.reduce((s, it) => {
+    const unit = typeof it.negotiatedUnitPrice === 'number'
+      ? it.negotiatedUnitPrice
+      : (priceByProduct.get(it.productId) ?? 0);
+    return s + Math.round(unit * 100);
+  }, 0) / 100;
 
   const policy = evaluateTransactionPolicy({
     amount: subtotal,
@@ -3882,6 +3939,21 @@ async function start() {
       );
     },
     newTxnId: () => newTxnId(),
+    resolveCallerBuyerWorkspace: (req) => {
+      // Identity is bound to the email the client sent to /api/bootstrap.
+      // The client echoes it back via `x-buyer-email` AND the workspace
+      // bootstrap returned via `x-buyer-workspace-id`. The two MUST
+      // agree — that's how we filter out a client forging a foreign
+      // workspace id while keeping the bootstrap handshake as the only
+      // identity primitive we have today. Server-stored email from
+      // session cookies is the upgrade path; this is a temporary bridge.
+      const rawEmail = req.header('x-buyer-email');
+      const rawWs = req.header('x-buyer-workspace-id');
+      if (!rawEmail || !rawWs) return null;
+      const { workspaceId } = resolveBuyerWorkspaceId(rawEmail);
+      if (workspaceId !== rawWs.trim()) return null;
+      return { workspaceId };
+    },
   });
   console.log('🤖 Agent catalog mounted at /agent/catalog, /agent/seller/{negotiate,intent}');
 

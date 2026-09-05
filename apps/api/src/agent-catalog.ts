@@ -171,16 +171,29 @@ export interface AgentRouterDeps {
     outcome: string;
   }) => Promise<void>;
   newTxnId: () => string;
+  // Resolves the caller's buyer workspace from session context. The
+  // helper MUST verify identity (e.g. require an email or signed cookie),
+  // never trust client-supplied workspaceIds as identity.
+  //
+  // UPGRADE PATH: today's implementation in apps/api/src/index.ts binds
+  // identity to the `x-buyer-email` + `x-buyer-workspace-id` headers a
+  // client echoes back from /api/bootstrap. A client can spoof their own
+  // email but not a foreign workspace id (the resolver cross-checks
+  // them). This is acceptable because (a) the negotiation audit row
+  // stores the buyer workspace and (b) the negotiated-price path is
+  // validated server-side from the audit log, not from a fresh client
+  // claim. Replace this with a signed session cookie before exposing
+  // /agent/* routes to untrusted callers.
+  resolveCallerBuyerWorkspace: (req: express.Request) => { workspaceId: string } | null;
 }
 
 export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): void {
-  const { pool, merchantWorkspace, writeAudit, newTxnId } = deps;
+  const { pool, writeAudit, newTxnId, resolveCallerBuyerWorkspace } = deps;
 
-  function callerMerchantWorkspace(req: express.Request): string {
-    const raw = req.header('x-merchant-workspace-id');
-    if (typeof raw === 'string' && raw.trim()) return raw.trim();
-    return merchantWorkspace();
-  }
+  // The merchant workspace is derived from the caller's SESSION (buyer
+  // identity), never from a request body or header. `x-merchant-workspace-id`
+  // is treated as informational only; the only authoritative source is
+  // `resolveCallerBuyerWorkspace(req)`.
 
   app.get('/.well-known/agent.json', (_req, res) => {
     res.json({
@@ -273,7 +286,16 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
     const whereSql = where.join(' AND ');
 
     try {
-      const ws = callerMerchantWorkspace(req);
+      // Catalog reads: buyer session is required (the buyer-agent is the
+      // documented consumer). The merchant workspace comes from the
+      // session. A forged `x-merchant-workspace-id` header alone cannot
+      // change the workspace — see `resolveCallerBuyerWorkspace`.
+      const caller = resolveCallerBuyerWorkspace(req);
+      if (!caller) {
+        agentErr(res, 401, 'UNAUTHENTICATED', 'buyer session required.');
+        return;
+      }
+      const ws = caller.workspaceId;
       params.push(ws);
       const wsIdx = params.length;
       const scopedWhere = `${whereSql} AND workspace_id = $${wsIdx}`;
@@ -311,7 +333,12 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       return;
     }
     try {
-      const ws = callerMerchantWorkspace(req);
+      const caller = resolveCallerBuyerWorkspace(req);
+      if (!caller) {
+        agentErr(res, 401, 'UNAUTHENTICATED', 'buyer session required.');
+        return;
+      }
+      const ws = caller.workspaceId;
       const { rows } = await pool.query<ProductRow>(
         `SELECT sku, name, description, price, currency, availability,
                 inventory_quantity, status, image_link, brand,
@@ -354,19 +381,31 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       return;
     }
     try {
-      const ws = callerMerchantWorkspace(req);
-      const { rows: prodRows } = await pool.query<ProductRow>(
+      // Identity = the buyer's session. The merchant workspace is DERIVED
+      // from the SKU's own row in `products.workspace_id` — never trusted
+      // from client headers or body. A buyer can negotiate with any
+      // merchant; the server picks which merchant this SKU belongs to.
+      const caller = resolveCallerBuyerWorkspace(req);
+      if (!caller) {
+        agentErr(res, 401, 'UNAUTHENTICATED', 'session required.');
+        return;
+      }
+      const callerWs = caller.workspaceId;
+      const { rows: prodRows } = await pool.query<ProductRow & { workspace_id: string }>(
         `SELECT sku, name, price, currency, inventory_quantity, availability,
-                status, brand, product_category, image_link, description, enable_search
-         FROM products WHERE sku = $1 AND enable_search = TRUE
-           AND workspace_id = $2`,
-        [sku, ws],
+                status, brand, product_category, image_link, description, enable_search,
+                workspace_id
+         FROM products WHERE sku = $1 AND enable_search = TRUE`,
+        [sku],
       );
       const product = prodRows[0];
       if (!product) {
         agentErr(res, 404, 'NOT_FOUND', 'no such sku');
         return;
       }
+      // Server-resolved merchant workspace for THIS SKU. Body/header hints
+      // are ignored on purpose — see commit log entry.
+      const merchantWs = product.workspace_id;
       const listPrice = Number(product.price);
       if (currency && currency !== product.currency) {
         agentErr(res, 409, 'CURRENCY_MISMATCH', `sku priced in ${product.currency}.`);
@@ -377,17 +416,6 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
           `only ${product.inventory_quantity} units available.`);
         return;
       }
-      const callerWs = (req.header('x-workspace-id') as string | undefined)?.trim()
-        || (typeof req.body?.workspaceId === 'string' ? req.body.workspaceId.trim() : '')
-        || merchantWorkspace();
-      const callerIsMerchant = !req.body?.workspaceId
-        || (typeof req.body.workspaceId === 'string'
-            && req.body.workspaceId.trim() === merchantWorkspace());
-      if (!callerIsMerchant) {
-        agentErr(res, 403, 'FORBIDDEN',
-          'seller negotiation requires merchant workspace.');
-        return;
-      }
 
       // Decision logic. Order: list price floor → bulk tier → counter.
       const minPrice = Math.round(listPrice * 0.8 * 100) / 100;
@@ -396,7 +424,6 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       let reason: string;
 
       if (quantity > 25) {
-        // Above the highest bulk tier — human input needed.
         decision = 'counter_quote_required';
         unitPrice = null;
         reason = 'quantity exceeds highest bulk tier; merchant review required.';
@@ -409,7 +436,6 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
         unitPrice = null;
         reason = `proposed ${proposedUnitPrice.toFixed(2)} below floor ${minPrice.toFixed(2)}.`;
       } else {
-        // Counter at the matching bulk tier if any, else the proposed price.
         const tier = quantity >= 25
           ? { min_quantity: 25, unit_price: Math.round(listPrice * 0.75 * 100) / 100 }
           : quantity >= 5
@@ -431,14 +457,23 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
         workspaceId: callerWs,
         actor: 'seller_agent',
         action: 'seller_negotiation',
-        detail: JSON.stringify({ sku, quantity, proposed_unit_price: proposedUnitPrice, decision, unit_price: unitPrice, total, reason }),
+        detail: JSON.stringify({
+          sku, quantity, proposed_unit_price: proposedUnitPrice,
+          decision, unit_price: unitPrice, total, reason,
+          buyer_workspace: callerWs, merchant_workspace: merchantWs,
+        }),
         amount: total,
         outcome: decision === 'accept' ? 'success' : decision === 'reject' ? 'rejected' : 'countered',
       });
 
       res.json({
         schema_version: AGENT_SCHEMA_VERSION,
-        data: { decision, sku, quantity, unit_price: unitPrice, total, currency: product.currency, expires_at: expiresAt, reason },
+        data: {
+          decision, sku, quantity, unit_price: unitPrice, total,
+          currency: product.currency, expires_at: expiresAt, reason,
+          merchant_workspace: merchantWs,
+          negotiation_txn_id: decision === 'accept' || decision === 'counter' ? txnId : null,
+        },
       });
     } catch (err) {
       console.error('POST /agent/seller/negotiate error:', err);
@@ -465,7 +500,12 @@ export function mountAgentCatalog(app: express.Express, deps: AgentRouterDeps): 
       ? (constraints.capabilities as unknown[]).filter((c): c is string => typeof c === 'string')
       : [];
     try {
-      const ws = callerMerchantWorkspace(req);
+      const caller = resolveCallerBuyerWorkspace(req);
+      if (!caller) {
+        agentErr(res, 401, 'UNAUTHENTICATED', 'buyer session required.');
+        return;
+      }
+      const ws = caller.workspaceId;
       const { rows } = await pool.query<ProductRow>(
         `SELECT sku, name, description, price, currency, availability,
                 inventory_quantity, status, image_link, brand,

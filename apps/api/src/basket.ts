@@ -1,5 +1,7 @@
 // Server-authoritative basket. The browser cannot set amount/total —
-// every price is reloaded from products before checkout runs.
+// every price is reloaded from products before checkout runs, EXCEPT
+// the negotiated price which is server-validated against the audit log
+// of the prior /agent/seller/negotiate response.
 //
 // Ponytail: baskets are short-lived and replaced on next checkout. No TTL
 // sweeper; ceiling applies only when the table grows unbounded.
@@ -16,7 +18,80 @@ export interface BasketItem {
   productId: number;
   priceAtAdd: number;
   name?: string;
+  // Server-stamped from a successful negotiate response. Authoritative
+  // override for checkout — never trust a price sent fresh from the client
+  // at checkout time.
+  negotiatedUnitPrice?: number | null;
+  negotiationTxnId?: string | null;
 }
+
+const NEGOTIATION_TTL_MS = 15 * 60 * 1000;
+
+export async function resolveNegotiatedPrice(
+  pool: Db,
+  workspaceId: string,
+  productId: number,
+  claimedUnitPrice: number,
+  negotiationTxnId: string,
+): Promise<number> {
+  // The negotiation audit row is the source of truth. Re-load it from
+  // the DB; reject if it's missing, expired, belongs to a different
+  // buyer, or covers a different product. The `claimedUnitPrice` must
+  // exactly match what the seller accepted — no client-side rewrites.
+  const { rows } = await pool.query<{
+    detail: string;
+    workspace_id: string;
+    outcome: string;
+    created_at: Date;
+  }>(
+    `SELECT detail, workspace_id, outcome, created_at
+       FROM audit_log
+      WHERE transaction_id = $1
+        AND actor = 'seller_agent'
+        AND action = 'seller_negotiation'`,
+    [negotiationTxnId],
+  );
+  if (rows.length === 0) {
+    throw new InvalidNegotiatedPrice('negotiation not found.');
+  }
+  const row = rows[0];
+  if (row.workspace_id !== workspaceId) {
+    throw new InvalidNegotiatedPrice('negotiation belongs to a different workspace.');
+  }
+  if (row.outcome !== 'success' && row.outcome !== 'countered') {
+    throw new InvalidNegotiatedPrice(`negotiation outcome ${row.outcome} not usable.`);
+  }
+  const ageMs = Date.now() - new Date(row.created_at).getTime();
+  if (ageMs > NEGOTIATION_TTL_MS) {
+    throw new InvalidNegotiatedPrice('negotiation expired.');
+  }
+  let detail: {
+    sku?: string;
+    decision?: string;
+    unit_price?: number;
+  };
+  try {
+    detail = JSON.parse(row.detail);
+  } catch {
+    throw new InvalidNegotiatedPrice('negotiation detail malformed.');
+  }
+  if (detail.decision !== 'accept' && detail.decision !== 'counter') {
+    throw new InvalidNegotiatedPrice(`decision ${detail.decision} cannot be checked out.`);
+  }
+  if (typeof detail.unit_price !== 'number') {
+    throw new InvalidNegotiatedPrice('negotiation missing unit_price.');
+  }
+  // The unit_price the buyer committed to must match the audit log EXACTLY
+  // — float drift is the bug we're guarding against. Use a half-cent
+  // tolerance for legitimate rounding only.
+  if (Math.abs(detail.unit_price - claimedUnitPrice) > 0.005) {
+    throw new InvalidNegotiatedPrice(
+      `claimed unit_price ${claimedUnitPrice} does not match negotiation ${detail.unit_price}.`,
+    );
+  }
+  return detail.unit_price;
+}
+
 
 export interface Basket {
   id: string;
@@ -82,13 +157,44 @@ export async function createBasket(
   workspaceId: string,
   productId: number,
   merchantWorkspaceId: string,
+  opts: { negotiatedUnitPrice?: number; negotiationTxnId?: string } = {},
 ): Promise<Basket> {
   const product = await loadActiveProduct(pool, productId, merchantWorkspaceId);
   if (!product.inStock) throw new InventoryUnavailable(productId, 'unavailable');
 
+  // Validate the negotiated price against the audit log BEFORE we stamp
+  // it on the basket. The browser cannot send a fresh `unit_price` at
+  // checkout time and have it honored — only audit-validated rows count.
+  let priceAtAdd = product.price;
+  let negotiatedUnitPrice: number | null = null;
+  let negotiationTxnId: string | null = null;
+  if (opts.negotiationTxnId && typeof opts.negotiatedUnitPrice === 'number') {
+    priceAtAdd = await resolveNegotiatedPrice(
+      pool,
+      workspaceId,
+      productId,
+      opts.negotiatedUnitPrice,
+      opts.negotiationTxnId,
+    );
+    negotiatedUnitPrice = priceAtAdd;
+    negotiationTxnId = opts.negotiationTxnId;
+  } else if (opts.negotiationTxnId || opts.negotiatedUnitPrice !== undefined) {
+    // One but not the other — caller is misusing the API.
+    throw new InvalidNegotiatedPrice(
+      'negotiatedUnitPrice and negotiationTxnId must both be provided.',
+    );
+  }
+
   const id = 'bsk_' + crypto.randomBytes(8).toString('base64url');
   const txnId = 'TXN-' + crypto.randomBytes(8).toString('base64url').toUpperCase();
-  const items: BasketItem[] = [{ productId: product.id, priceAtAdd: product.price, name: product.name }];
+  const item: BasketItem = {
+    productId: product.id,
+    priceAtAdd,
+    name: product.name,
+    negotiatedUnitPrice,
+    negotiationTxnId,
+  };
+  const items: BasketItem[] = [item];
 
   await pool.query(
     `INSERT INTO baskets (id, workspace_id, txn_id, items, status)
@@ -105,6 +211,10 @@ export async function createBasket(
     currency: 'INR',
     status: 'open',
   };
+}
+
+export class InvalidNegotiatedPrice extends Error {
+  code = 'INVALID_NEGOTIATED_PRICE';
 }
 
 export async function addToBasket(

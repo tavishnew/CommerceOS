@@ -191,6 +191,12 @@ export interface Product {
   category?: string | null;
   status?: string;
   createdAt?: string | null;
+  negotiation?: {
+    negotiable: boolean;
+    min_price: number | null;
+    currency: string;
+    bulk_tiers: Array<{ min_quantity: number; unit_price: number }> | null;
+  } | null;
 }
 
 export interface Order {
@@ -223,9 +229,17 @@ export interface Order {
 async function apiFetch<T>(path: string, init?: RequestInit & { __public?: boolean }): Promise<T> {
   const isPublic = init?.__public === true;
   const merchantWs = isPublic ? null : getStoredMerchantWorkspaceId();
+  // Buyer-side identity headers for the agent surface. The negotiate
+  // route resolves the caller's buyer workspace from these — see
+  // apps/api/src/agent-catalog.ts resolveCallerBuyerWorkspace. Both
+  // must be present; the server cross-checks them.
+  const buyerEmail = isPublic ? null : getStoredBuyerEmail();
+  const buyerWs = isPublic ? null : getOrCreateBuyerWorkspaceId();
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(merchantWs ? { 'X-Merchant-Workspace-Id': merchantWs } : {}),
+    ...(buyerEmail ? { 'x-buyer-email': buyerEmail } : {}),
+    ...(buyerWs ? { 'x-buyer-workspace-id': buyerWs } : {}),
     ...(init?.headers as Record<string, string> | undefined),
   };
   let res: Response;
@@ -358,21 +372,77 @@ export function createOrder(data: {
 
 // ── Baskets + checkout ─────────────────────────────────────────────────────
 
+export interface BasketItem {
+  productId: number;
+  priceAtAdd: number;
+  name?: string;
+  negotiatedUnitPrice?: number | null;
+  negotiationTxnId?: string | null;
+}
+
 export interface Basket {
   id: string;
   workspaceId: string;
   txnId: string;
-  items: Array<{ productId: number; priceAtAdd: number; name?: string }>;
+  items: BasketItem[];
   subtotal: number;
   currency: 'INR';
   status: 'open' | 'checked_out' | 'expired';
 }
 
-export function createBasket(workspaceId: string, productId: number): Promise<Basket> {
+export interface NegotiateOptions {
+  negotiatedUnitPrice?: number;
+  negotiationTxnId?: string;
+}
+
+export function createBasket(
+  workspaceId: string,
+  productId: number,
+  opts: NegotiateOptions = {},
+): Promise<Basket> {
   return apiFetch<Basket>('/api/baskets', {
     method: 'POST',
-    body: JSON.stringify({ workspaceId, productId }),
+    body: JSON.stringify({ workspaceId, productId, ...opts }),
   });
+}
+
+export type NegotiationDecision =
+  | 'accept'
+  | 'counter'
+  | 'reject'
+  | 'counter_quote_required';
+
+export interface NegotiationResult {
+  decision: NegotiationDecision;
+  sku: string;
+  quantity: number;
+  unit_price: number | null;
+  total: number | null;
+  currency: string;
+  expires_at: string;
+  reason: string;
+  merchant_workspace: string;
+  negotiation_txn_id: string | null;
+}
+
+export function negotiateSeller(input: {
+  sku: string;
+  quantity: number;
+  proposedUnitPrice: number;
+  currency: string;
+}): Promise<{ schema_version: string; data: NegotiationResult }> {
+  return apiFetch<{ schema_version: string; data: NegotiationResult }>(
+    '/agent/seller/negotiate',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        sku: input.sku,
+        quantity: input.quantity,
+        proposed_unit_price: input.proposedUnitPrice,
+        currency: input.currency,
+      }),
+    },
+  );
 }
 
 export function addBasketItem(
